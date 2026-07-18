@@ -668,3 +668,37 @@ requirements modeled as unconditional.
 
 **Not covered this pass** — `integrations.update`, `webdav.removeWebdavAccount`,
 `oauth-apps.update`/`get`. Genuinely untested.
+
+### 2026-07-19 — Provider contract test: `marketplace-apps.yaml`
+
+13 operations (Apps Engine marketplace/installed-apps management).
+
+**Minor spec path error, confirmed, not a spec judgment call — genuinely
+objective:** `/apps/count` and `/apps/buildExternalAppRequest` are both
+declared in the spec *without* an `/api` prefix. The real, working paths
+are `/api/apps/count` and `/api/apps/buildExternalAppRequest` — confirmed
+by testing the bare path first (`404`/SPA-fallback HTML, not a JSON
+error) and then the `/api`-prefixed path (clean `200` with real data).
+Every other operation in this file correctly uses either `/api/apps/...`
+or `/api/apps/...` with a path param. Different in kind from the
+`integrations.create` finding: this isn't a conditional-requirement
+contradiction, it's a straightforward path typo in two entries. Logged as
+a second candidate for an upstream spec fix, not touched here.
+
+**Own test mistake, caught before being misreported:** `GET /api/apps`
+(no `appId`) — the real bare-list `GET /api/apps` route doesn't exist;
+the spec's `get-api-apps` operation is actually declared under
+`/api/apps/{appId}` (a per-app lookup, confirmed by tracing the path key
+governing that operation block), not a list endpoint. `POST /api/apps`
+(install) is the only bare `/api/apps` operation.
+
+**Confirmed clean:** `apps.installed`, `apps/categories`, `apps/marketplace`
+(this one genuinely reached Rocket.Chat's real cloud marketplace API and
+returned live app listings — confirms outbound connectivity works in this
+test environment).
+
+**Not covered this pass** — `apps/logs` (and the per-app `{id}/logs`
+variant), `video-conference/jitsi.update-timeout`, `POST /api/apps`
+(install — would need a real app package, out of scope), `DELETE
+/api/apps/{appId}`, the incoming-webhook/template-message app endpoints
+at the top of the file. Genuinely untested.
