@@ -134,3 +134,34 @@ services:
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
       - --junitReportDir=/usr/src/app/reports
+
+  # messaging.yaml: 44 operations, real fixtures seeded (message, threaded
+  # reply, DM room) by regenerate-auth-examples.sh. --lenient is required
+  # here specifically: the SPEC's own inline examples (not ours) have
+  # genuine defects -- dm.list's own example has an md[] value typed
+  # inconsistently, dm.setTopic's own example omits required auth headers
+  # -- which abort the entire file's example loading to a single
+  # synthetic failure without --lenient (verified: Tests run: 1 without
+  # the flag, 126 with it). This directly contradicts the old branch's
+  # blanket claim that --lenient "drops the whole suite to 1 test" --
+  # empirically, for this spec file, the opposite is true. Every one of
+  # the ~105 remaining failures collapses into one of a handful of
+  # documented, systemic accepted-drift categories (see README) rather
+  # than being 105 distinct issues.
+  specmatic-contract-test-messaging:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/reports/messaging:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/messaging.yaml
+      - --examples
+      - /usr/src/app/examples
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports
+      - --lenient

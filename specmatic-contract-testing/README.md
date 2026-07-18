@@ -267,3 +267,97 @@ against a fabricated ID that would only exercise the "not found" path
 genuine `_updatedAt` accepted-drift finding above, the rest are `push.get`
 (deferred) plus the same "spec's own dummy inline example lacks real
 credentials" noise pattern already established. Zero unexplained failures.
+
+### 2026-07-19 — Provider contract test: `messaging.yaml`
+
+44 operations (chat.*, dm./im.*, autotranslate.*) — the largest file so
+far, more than the previous three combined. Real fixtures seeded by
+`regenerate-auth-examples.sh`: a message posted to `#general`, a threaded
+reply to it, and a DM room (self-DM, "notes to self" pattern). ~35 of 44
+operations got a real external example exercising them against the live
+app; the rest are genuinely deferred (see below).
+
+**Required `--lenient`, and this directly contradicts a claim from the old
+branch.** Without it, the spec's *own* inline examples (not ours) — e.g.
+`dm.list`'s own example has an `md[]` value typed inconsistently, and
+`dm.setTopic`'s own example omits its required auth headers — abort
+loading for the entire file to one synthetic failure (`Tests run: 1`,
+verified directly). With `--lenient`, `126` real tests run instead. The
+old branch's README claimed `--lenient` "was found to drop the whole suite
+to 1 test if even a single bad example aborted the run" — empirically,
+for this spec file, the opposite is true: `--lenient` is what *fixes* that
+exact collapse. Worth remembering: a claim from the old work is a claim
+about the old work's specific situation, not a fact about Specmatic in
+general — verify fresh each time rather than inheriting a prior
+conclusion.
+
+**Mechanical lesson (fixed on our side, not a finding about the app):**
+initial external examples reused one generic "message object" shape
+across every operation. Several were silently dropped at load time with
+no error, even under `--lenient`, because each operation in this spec
+hand-duplicates its own narrower "message" schema — `chat.getMessage`
+declares `u.name`, `chat.postMessage`/`chat.sendMessage` don't;
+`chat.getMessage` includes `reactions`/`mentions`/`channels`/`starred`/`t`,
+others don't; none of them declare `attachments`/`parseUrls`/`md`, even
+though the live app always returns them. Fixed by trimming our own
+examples to just the fields common to every schema checked (`_id`, `rid`,
+`msg`, `ts`, `u._id`, `u.username`) — safe everywhere, since none of these
+per-operation schemas mark any message sub-field as required.
+
+**Accepted drift, systemic (not 105 separate bugs — every failure below
+collapses into one of these categories):**
+- **Undocumented real fields**, the largest category by far. The live app
+  consistently returns fields no operation's schema declares, inconsistently
+  across operations: `_id`, `alias`, `attachments`, `details`, `editedAt`,
+  `editedBy`, `groupable`, `parent`, `parseUrls`, `pinned`, `pinnedAt`,
+  `pinnedBy`, `reactions`, `replies`, `starred`, `t`, `tcount`, `tlm`,
+  `tmid`, `urls`, `errorType`, `_hidden` — confirmed by direct count across
+  the full run (336 occurrences, ~24 distinct field names, only 2 distinct
+  *type*-mismatch locations — see below). Same root cause identified once
+  already for `authentication.yaml`/`notifications.yaml`, at much larger
+  scale here since almost every chat/DM operation returns a message, room,
+  or error object.
+- **`reactions` modeled as a literal key, not a map.** The schema declares
+  `reactions` with one hardcoded example emoji name (`:frowning2:`) as if
+  it were a fixed property, instead of describing it as a free-form
+  emoji→usernames map. Real reactions under any other emoji (e.g. `:smile:`,
+  used by our own `chat-react` example) get flagged as an "unknown
+  property" — a modeling defect, not an app bug.
+- **`md[].value[].value` is genuinely polymorphic** (a plain string, a
+  `{type,value}` object, or an array of them, depending on message
+  content), but the spec fixes it as a single type. Same finding the old
+  branch already made; independently reproduced here via `dm.list`'s
+  message previews, not taken on faith.
+- **`unreadsFrom` real value is `null`; spec declares `type: string`** (no
+  `nullable`/`oneOf`). `dm.counters` returns `null` when there's no unread
+  interval — confirmed directly. Left our own example without this field
+  (omitting it is enough to satisfy the schema, since nothing requires it)
+  rather than fabricate a string value that isn't what the app returns.
+
+**Real, legitimate non-2xx paths exercised (not bugs):** `chat.getMessageReadReceipts`
+(Enterprise-gated: `"This is an enterprise feature"` on Community Edition),
+`dm.messages.others` (disabled by default: `error-endpoint-disabled`),
+`im.blockUser` (`error-invalid-room` — our fixture is a self-DM with no
+second real user to block; the app's validation is correct for that input,
+creating a second user account is out of scope here), all three
+`autotranslate.*` operations (`"AutoTranslate is disabled."` — not
+configured on a fresh instance).
+
+**Genuine spec gap, not worked around:** `autotranslate.saveSettings`'s
+spec declares only `200`/`401` responses — no `400` at all — yet the live
+app returns `400` (`"AutoTranslate is disabled."`) exactly like the other
+two `autotranslate.*` operations do. No schema-conformant external example
+is possible for a status the operation doesn't declare, so none was
+written; the finding is established directly from the live `curl` response
+instead (see script comments).
+
+**Not yet resolved (scoped follow-up)** — `GET /api/v1/push.get`
+(`notifications.yaml`, previously deferred) still isn't wired: it needs a
+real message `_id`, which now exists (this pass seeded one), but revisiting
+it is left for a dedicated pass over `notifications.yaml` rather than a
+side effect of this one.
+
+**Result:** 126 tests run, ~20 pass with real requests across roughly 35
+operations actually exercised, ~105 fail — every failure accounted for by
+the categories above. Zero unexplained failures, despite the much larger
+surface area than any prior file.

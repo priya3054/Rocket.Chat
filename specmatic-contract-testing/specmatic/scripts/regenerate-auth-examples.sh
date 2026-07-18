@@ -345,3 +345,608 @@ cat > "${EXAMPLES_DIR}/push-token-delete.json" <<EOF
 EOF
 
 echo "Wrote notifications.yaml examples (push.get deferred)."
+
+# messaging.yaml -- seed real fixtures: a message in #general, a threaded
+# reply to it, and a DM room. mutate/delete operations act on these same
+# real ids so every example reflects the app's actual behavior, not
+# invented data. chat.delete and dm.delete run at the very end (see
+# bottom of this file) since other operations here depend on the message
+# and room still existing.
+post_response=$(curl -sf -X POST "${BASE_URL}/api/v1/chat.postMessage" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"channel":"general","text":"specmatic test message"}')
+MSG_ID=$(printf '%s' "$post_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_id"])')
+
+reply_response=$(curl -sf -X POST "${BASE_URL}/api/v1/chat.sendMessage" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"message\":{\"rid\":\"GENERAL\",\"msg\":\"specmatic thread reply\",\"tmid\":\"${MSG_ID}\"}}")
+REPLY_ID=$(printf '%s' "$reply_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_id"])')
+
+dm_response=$(curl -sf -X POST "${BASE_URL}/api/v1/dm.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"username":"admin"}')
+DM_RID=$(printf '%s' "$dm_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["room"]["rid"])')
+
+if [ -z "$MSG_ID" ] || [ -z "$REPLY_ID" ] || [ -z "$DM_RID" ]; then
+  echo "Failed to seed messaging.yaml fixtures (message/reply/DM room)" >&2
+  exit 1
+fi
+
+# The real "message" object RocketChat returns everywhere (postMessage,
+# getMessage, search, pinned/starred lists, sync*, dm.messages, ...)
+# consistently carries fields the spec doesn't document: attachments,
+# mentions, channels, urls, the md markdown AST, and (on some but not all
+# operations) u.name. Documented once in README as a general accepted-
+# drift pattern rather than repeated per operation.
+#
+# IMPORTANT: unlike postMessage/getMessage which share a near-identical
+# real shape, each operation below hand-duplicates its OWN "message"
+# object schema in the spec, with an inconsistent property list per
+# operation (getMessage declares u.name, postMessage/sendMessage don't;
+# none of them declare attachments/parseUrls/md/mentions/channels/urls
+# even though the real app always returns them). Confirmed empirically:
+# reusing one generic real-shaped body across operations caused several
+# examples below to be silently dropped at load time (schema mismatch on
+# THIS file's own example, not a live-request problem) with no error
+# printed even under --lenient. So this helper only emits the properties
+# common to every schema checked (_id, rid, msg, ts, u._id, u.username) --
+# safe everywhere, at the cost of not exercising the full real shape in
+# every one of our own examples (the accepted-drift finding itself is
+# already established once against postMessage's real response, see
+# README, so nothing is lost by keeping the rest minimal).
+msg_body() {
+  local id="$1" msg="$2" ts="$3" tmid="$4"
+  local tmid_field=""
+  [ -n "$tmid" ] && tmid_field="\"tmid\": \"${tmid}\","
+  cat <<EOF
+{ "_id": "${id}", "rid": "GENERAL", ${tmid_field} "msg": "${msg}", "ts": "${ts}", "u": { "_id": "${user_id}", "username": "admin" } }
+EOF
+}
+
+MSG_TS=$(printf '%s' "$post_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["ts"])')
+MSG_UPDATED=$(printf '%s' "$post_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_updatedAt"])')
+
+cat > "${EXAMPLES_DIR}/chat-getMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getMessage",
+    "method": "GET",
+    "query": { "msgId": "${MSG_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "message": $(msg_body "$MSG_ID" "specmatic test message" "$MSG_TS" ""), "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-react.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.react",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}", "emoji": ":smile:" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-update.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.update",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "GENERAL", "msgId": "${MSG_ID}", "text": "specmatic test message (edited)" }
+  },
+  "http-response": { "status": 200, "body": { "message": $(msg_body "$MSG_ID" "specmatic test message (edited)" "$MSG_TS" ""), "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-followMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.followMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "mid": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-unfollowMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.unfollowMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "mid": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-pinMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.pinMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}" }
+  },
+  "http-response": {
+    "status": 200,
+    "body": { "message": { "_id": "seed-pin-system-msg", "t": "message_pinned", "rid": "GENERAL", "ts": "${MSG_TS}", "msg": "", "u": { "_id": "${user_id}", "username": "admin", "name": "Administrator" }, "groupable": false, "attachments": [{ "text": "specmatic test message", "author_name": "admin", "author_icon": "/avatar/admin", "ts": "${MSG_TS}", "attachments": [] }], "_updatedAt": "${MSG_UPDATED}" }, "success": true }
+  }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-unPinMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.unPinMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-starMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.starMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-unStarMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.unStarMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-reportMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.reportMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}", "description": "specmatic test report" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-ignoreUser.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.ignoreUser",
+    "method": "GET",
+    "query": { "rid": "GENERAL", "userId": "${user_id}", "ignore": "true" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getPinnedMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getPinnedMessages",
+    "method": "GET",
+    "query": { "roomId": "GENERAL" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getStarredMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getStarredMessages",
+    "method": "GET",
+    "query": { "roomId": "GENERAL" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getDiscussions.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getDiscussions",
+    "method": "GET",
+    "query": { "roomId": "GENERAL" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getMentionedMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getMentionedMessages",
+    "method": "GET",
+    "query": { "roomId": "GENERAL" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getDeletedMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getDeletedMessages",
+    "method": "GET",
+    "query": { "roomId": "GENERAL", "since": "2020-01-01T00:00:00.000Z" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } }
+}
+EOF
+
+# Enterprise-gated on this (Community Edition) instance -- a real,
+# legitimate license-gate response, not a bug. See README. Body has only
+# error/success -- this operation's declared 400 schema doesn't include
+# errorType (unlike most other operations' 400 schemas), confirmed by
+# checking the spec directly after this example was silently dropped at
+# load time for including it.
+cat > "${EXAMPLES_DIR}/chat-getMessageReadReceipts-ee.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getMessageReadReceipts",
+    "method": "GET",
+    "query": { "messageId": "${MSG_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-search.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.search",
+    "method": "GET",
+    "query": { "roomId": "GENERAL", "searchText": "test" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [$(msg_body "$MSG_ID" "specmatic test message" "$MSG_TS" "")] } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getURLPreview.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getURLPreview",
+    "method": "GET",
+    "query": { "roomId": "GENERAL", "url": "https://rocket.chat" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "urlPreview": { "url": "https://rocket.chat" } } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-syncMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.syncMessages",
+    "method": "GET",
+    "query": { "roomId": "GENERAL", "lastUpdate": "2020-01-01T00:00:00.000Z" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "result": { "updated": [$(msg_body "$MSG_ID" "specmatic test message" "$MSG_TS" "")], "deleted": [] }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-getThreadsList.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getThreadsList",
+    "method": "GET",
+    "query": { "rid": "GENERAL" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "threads": [$(msg_body "$MSG_ID" "specmatic test message (edited)" "$MSG_TS" "")], "count": 1, "offset": 0, "total": 1, "success": true } }
+}
+EOF
+
+REPLY_TS=$(printf '%s' "$reply_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["ts"])')
+REPLY_UPDATED=$(printf '%s' "$reply_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_updatedAt"])')
+
+cat > "${EXAMPLES_DIR}/chat-getThreadMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.getThreadMessages",
+    "method": "GET",
+    "query": { "tmid": "${MSG_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [$(msg_body "$REPLY_ID" "specmatic thread reply" "$REPLY_TS" "$MSG_ID")] } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-syncThreadMessages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.syncThreadMessages",
+    "method": "GET",
+    "query": { "tmid": "${MSG_ID}", "updatedSince": "2020-01-01T00:00:00.000Z" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": { "update": [$(msg_body "$REPLY_ID" "specmatic thread reply" "$REPLY_TS" "$MSG_ID")], "remove": [] }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-syncThreadsList.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.syncThreadsList",
+    "method": "GET",
+    "query": { "rid": "GENERAL", "updatedSince": "2020-01-01T00:00:00.000Z" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "threads": { "update": [$(msg_body "$MSG_ID" "specmatic test message (edited)" "$MSG_TS" "")], "remove": [] }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/chat-sendMessage.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.sendMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "message": { "rid": "GENERAL", "msg": "specmatic sendMessage test" } }
+  },
+  "http-response": { "status": 200, "body": { "message": $(msg_body "seed-sendmessage" "specmatic sendMessage test" "$MSG_TS" ""), "success": true } }
+}
+EOF
+
+echo "Wrote messaging.yaml chat.* examples."
+
+# dm.* -- real DM room created above (self-DM, "notes to self" pattern).
+cat > "${EXAMPLES_DIR}/dm-list.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.list",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "ims": [], "offset": 0, "total": 0, "count": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-list-everyone.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.list.everyone",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "ims": [], "offset": 0, "total": 0, "count": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-members.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.members",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "members": [{ "_id": "${user_id}", "name": "Administrator", "username": "admin", "status": "offline", "utcOffset": 0 }], "count": 1, "offset": 0, "total": 1, "success": true } }
+}
+EOF
+
+# unreadsFrom omitted: the spec declares it type: string, but the real
+# app returns null when there's no unread interval (confirmed by direct
+# curl) -- a genuine type mismatch (see README), and including it as
+# null in our own example fails THIS file's own load-time type-check
+# the same way, so it's left out here (not required by the schema).
+cat > "${EXAMPLES_DIR}/dm-counters.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.counters",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "joined": true, "members": 1, "unreads": 0, "msgs": 0, "latest": "${MSG_UPDATED}", "userMentions": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-messages.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.messages",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } }
+}
+EOF
+
+# Disabled by default on this instance -- a real, legitimate feature-flag
+# response, not a bug. See README.
+cat > "${EXAMPLES_DIR}/dm-messages-others-disabled.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.messages.others",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "This endpoint is disabled [error-endpoint-disabled]", "errorType": "error-endpoint-disabled", "details": { "route": "/api/v1/im.messages.others" } } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-history.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.history",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "messages": [], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-files.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.files",
+    "method": "GET",
+    "query": { "roomId": "${DM_RID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "files": [], "count": 0, "offset": 0, "total": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-setTopic.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.setTopic",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "${DM_RID}", "topic": "specmatic test topic" }
+  },
+  "http-response": { "status": 200, "body": { "topic": "specmatic test topic", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-close.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.close",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "${DM_RID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-open.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.open",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "${DM_RID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-create.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.create",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "username": "admin" }
+  },
+  "http-response": { "status": 200, "body": { "room": { "t": "d", "rid": "${DM_RID}", "usernames": ["admin"] }, "success": true } }
+}
+EOF
+
+# Real, legitimate validation error: blocking requires a second real user
+# in the DM room, and this fixture is a self-DM ("notes to self") --
+# creating a second real user account is out of scope for this pass, so
+# this exercises the real error path rather than a fabricated one.
+cat > "${EXAMPLES_DIR}/im-blockUser-invalidroom.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/im.blockUser",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "${DM_RID}", "block": true }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "Invalid room [error-invalid-room]", "errorType": "error-invalid-room" } }
+}
+EOF
+
+echo "Wrote messaging.yaml dm.* examples."
+
+# autotranslate.* -- disabled workspace-wide on a fresh instance; a real,
+# legitimate feature-flag response for all three operations, not a bug.
+cat > "${EXAMPLES_DIR}/autotranslate-getSupportedLanguages-disabled.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/autotranslate.getSupportedLanguages",
+    "method": "GET",
+    "query": { "targetLanguage": "en" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "AutoTranslate is disabled." } }
+}
+EOF
+
+# No example written for autotranslate.saveSettings: confirmed via direct
+# curl that the real app returns 400 ("AutoTranslate is disabled.") when
+# called on a fresh instance, but the spec only declares 200/401 for this
+# operation -- no 400 schema exists at all, so no schema-conformant
+# external example is possible without inventing a response shape. This
+# is itself the finding (see README) rather than something to work around.
+
+cat > "${EXAMPLES_DIR}/autotranslate-translateMessage-disabled.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/autotranslate.translateMessage",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "messageId": "${MSG_ID}", "targetLanguage": "es" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "AutoTranslate is disabled." } }
+}
+EOF
+
+echo "Wrote messaging.yaml autotranslate.* examples."
+
+# chat.delete / dm.delete last -- run only after every operation above
+# that depends on the message/room still existing.
+cat > "${EXAMPLES_DIR}/chat-delete.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/chat.delete",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "GENERAL", "msgId": "${MSG_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "_id": "${MSG_ID}", "ts": "${MSG_TS}", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/dm-delete.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/dm.delete",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "roomId": "${DM_RID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+echo "Wrote messaging.yaml chat.delete/dm.delete examples (run last by Specmatic's own scenario ordering, not enforced here)."
