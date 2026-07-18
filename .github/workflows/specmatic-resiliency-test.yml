@@ -1,0 +1,83 @@
+name: Specmatic Resiliency Test
+
+# Same live RocketChat, same 12 specs as specmatic-contract-test.yml, but
+# with schemaResiliencyTests: all (specmatic/specmatic_resiliency.yaml) --
+# deliberately mutated/fuzzed inputs checking whether RocketChat rejects
+# them gracefully instead of crashing or leaking internal errors. A
+# different question from "does the API match the docs" (that's
+# specmatic-contract-test.yml), so it's entirely report-only: there's no
+# established baseline yet for what a "good" resiliency pass rate looks
+# like. No --examples here (see specmatic_resiliency.yaml for why --config
+# and --examples can't be combined in this pinned image), so this run has
+# no real auth wired -- same limitation the rest of this project already
+# documents, and resiliency testing's value (catching ungraceful failures
+# on malformed input) still holds regardless of auth state.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-resiliency-test.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-resiliency-test.yml"
+
+jobs:
+  resiliency-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: specmatic-contract-testing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Bring up RocketChat + MongoDB
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml up -d rocketchat mongodb
+
+      - name: Wait for RocketChat to be ready
+        run: |
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/info || echo 000)
+            if [ "$code" = "200" ]; then echo "RocketChat is up"; exit 0; fi
+            echo "waiting for RocketChat... ($i)"
+            sleep 3
+          done
+          echo "RocketChat did not become ready in time" >&2
+          exit 1
+
+      - name: Dump RocketChat logs (diagnostics)
+        if: failure()
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml logs rocketchat mongodb > rocketchat-diagnostics.log 2>&1 || true
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resiliency-test-diagnostics
+          path: specmatic-contract-testing/rocketchat-diagnostics.log
+
+      - name: Run resiliency tests, all 12 specs (report-only)
+        continue-on-error: true
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose \
+            -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml \
+            --profile test up specmatic-resiliency-test-all
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: specmatic-resiliency-report
+          path: specmatic-contract-testing/specmatic/reports/resiliency/
+
+      - name: Tear down
+        if: always()
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml down -v

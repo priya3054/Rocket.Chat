@@ -1,0 +1,63 @@
+name: Specmatic Consumer Mock
+
+# Starts the mock server generated straight from the 12 OpenAPI specs (no
+# real RocketChat needed) and smoke-tests that it serves a schema-valid
+# response. Hard gate: the mock never calls a real RocketChat, so nothing
+# here should legitimately be flaky. Catches spec-parse regressions (a
+# submodule bump that breaks a spec badly enough that Specmatic can't
+# generate a mock from it) cheaply and fast, before the slower live-server
+# workflows run.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-consumer-mock.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-consumer-mock.yml"
+
+jobs:
+  consumer-mock:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: specmatic-contract-testing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Start the mock server
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml --profile mock up -d specmatic-mock
+
+      - name: Wait for the mock server to be ready
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/api/v1/me -H "X-Auth-Token: dummy" -H "X-User-Id: dummy" || echo 000)
+            if [ "$code" = "200" ]; then echo "Mock server is up"; exit 0; fi
+            echo "waiting for mock server... ($i)"
+            sleep 2
+          done
+          echo "Mock server did not become ready in time" >&2
+          exit 1
+
+      - name: Smoke-test a schema-valid mock response
+        run: |
+          RESPONSE=$(curl -sf http://localhost:9000/api/v1/me -H "X-Auth-Token: dummy" -H "X-User-Id: dummy")
+          echo "$RESPONSE" | python3 -c "import json,sys; json.load(sys.stdin)"
+          echo "Mock server returned valid JSON."
+
+      - name: Show mock server logs on failure
+        if: failure()
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml --profile mock logs specmatic-mock
+
+      - name: Tear down
+        if: always()
+        run: |
+          DEPRECATED_COMPOSE_ACK=1 docker compose -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml --profile mock down -v

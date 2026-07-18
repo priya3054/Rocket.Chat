@@ -165,3 +165,75 @@ services:
       - --testBaseURL=http://rocketchat:${PORT:-3000}
       - --junitReportDir=/usr/src/app/reports
       - --lenient
+
+  # All 12 specs together, real examples -- this is what Step 4's honest
+  # 4% coverage baseline was measured from (see README). --lenient
+  # required (messaging.yaml's own inline examples have genuine defects,
+  # see that section) and --timeout-in-ms 15000 required (the default
+  # 6000ms produced a cascade of client-side timeouts under this run's
+  # full 1238-test load -- confirmed NOT a server hang, see README Step 4
+  # for the full correction). This is the service the CI coverage gate
+  # (Step 6) actually runs.
+  specmatic-contract-test-all:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/reports/all:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/authentication.yaml
+      - /usr/src/app/specs/content-management.yaml
+      - /usr/src/app/specs/integrations.yaml
+      - /usr/src/app/specs/marketplace-apps.yaml
+      - /usr/src/app/specs/messaging.yaml
+      - /usr/src/app/specs/miscellaneous.yaml
+      - /usr/src/app/specs/notifications.yaml
+      - /usr/src/app/specs/omnichannel.yaml
+      - /usr/src/app/specs/rooms.yaml
+      - /usr/src/app/specs/settings.yaml
+      - /usr/src/app/specs/statistics.yaml
+      - /usr/src/app/specs/user-management.yaml
+      - --examples
+      - /usr/src/app/examples
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports
+      - --lenient
+      - --timeout-in-ms=15000
+      - --filter=!(PATH='/api/v1/login - with Facebook') && !(PATH='/api/v1/login - with Twitter') && !(PATH='/api/v1/login - with Google') && !(PATH='/api/v1/logout') && !(PATH='/api/v1/twoFactorChallenges.sendEmailCode') && !(PATH='/api/v1/twoFactorChallenges.verifyChallenge')
+
+  # Resiliency/fuzz run, all 12 specs, informational only -- see
+  # specmatic_resiliency.yaml for why there's no --examples here
+  # (mutually exclusive with --config in this pinned image, and
+  # schemaResiliencyTests has no CLI flag).
+  specmatic-resiliency-test-all:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/specmatic_resiliency.yaml:/usr/src/app/specmatic.yaml:ro
+      - ../specmatic/reports/resiliency:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/authentication.yaml
+      - /usr/src/app/specs/content-management.yaml
+      - /usr/src/app/specs/integrations.yaml
+      - /usr/src/app/specs/marketplace-apps.yaml
+      - /usr/src/app/specs/messaging.yaml
+      - /usr/src/app/specs/miscellaneous.yaml
+      - /usr/src/app/specs/notifications.yaml
+      - /usr/src/app/specs/omnichannel.yaml
+      - /usr/src/app/specs/rooms.yaml
+      - /usr/src/app/specs/settings.yaml
+      - /usr/src/app/specs/statistics.yaml
+      - /usr/src/app/specs/user-management.yaml
+      - --config=/usr/src/app/specmatic.yaml
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports
+      - --lenient
+      - --timeout-in-ms=15000

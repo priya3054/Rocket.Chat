@@ -1,0 +1,25 @@
+# Resiliency/fuzz config: same specs, same live app, but deliberately
+# mutated/generated inputs (schemaResiliencyTests: all) instead of the
+# contract-correctness question Step 3/4 already answered. Kept as a
+# fully separate run from the contract-test one, same reasoning recorded
+# throughout this project: blending correctness checking with fuzz
+# testing produces an unreadable wall of failures where "the API doesn't
+# match the docs" and "the API didn't reject garbage gracefully" get
+# tangled together.
+#
+# No --examples here: --config (required for schemaResiliencyTests, no
+# CLI flag exists for it) and --examples cannot be combined in this
+# pinned image (see README Step 4) -- so this run has no real auth
+# wired, same limitation the old branch's own resiliency run had for
+# 11 of its 12 specs. Resiliency testing's actual value (does malformed
+# input crash the app rather than being rejected cleanly) still applies
+# regardless of auth state, so this is a real, if auth-less, run -- not
+# a no-op.
+#
+# No governance/coverage gate: "coverage" isn't a meaningful pass/fail
+# signal under fuzzing the way it is for the contract run. Report-only.
+version: 3
+specmatic:
+  settings:
+    test:
+      schemaResiliencyTests: all

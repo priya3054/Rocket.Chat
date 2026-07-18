@@ -1,0 +1,38 @@
+name: Specmatic Examples Lint
+
+# Report-only: validates every spec's own inline examples against their
+# own declared schemas (specmatic examples validate). continue-on-error
+# is deliberate -- these are the canonical, unforked upstream specs (see
+# README "Ground rules"), so this may surface genuine pre-existing
+# upstream issues that aren't this branch's fault to block on. Several
+# such issues are already documented in README.md's per-file sections
+# (e.g. dm.list's own inline example in messaging.yaml has an
+# inconsistently-typed md[] value) -- logged there, never patched here.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-examples-lint.yml"
+  push:
+    branches: [develop]
+    paths:
+      - "specmatic-contract-testing/**"
+      - ".github/workflows/specmatic-examples-lint.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate inline examples (all 12 specs)
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/specmatic-contract-testing/contracts:/specs" \
+            specmatic/specmatic:2.50.0 \
+            examples validate --specs-dir=/specs --examples-to-validate=INLINE --lenient
