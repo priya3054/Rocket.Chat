@@ -162,18 +162,25 @@ construction. This is a spec modeling choice (using path-name suffixes to
 document body-shape variants instead of `oneOf` on the one real path), not
 an app defect.
 
-**Spec blocker (excluded via `--filter`, not edited)** — `POST
-/api/v1/twoFactorChallenges.sendEmailCode` and
+**Spec blocker (excluded via `--filter`, not edited) — RESOLVED, no app fix
+needed.** `POST /api/v1/twoFactorChallenges.sendEmailCode` and
 `.../twoFactorChallenges.verifyChallenge` are fully documented in the spec
-but have **no corresponding route anywhere in `apps/meteor/server`** —
-confirmed by exhaustive search, not just a naming mismatch. The real,
-working equivalents are `users.2fa.sendEmailCode`/`enableEmail`/`disableEmail`
-(all present in `apps/meteor/server/api/v1/users.ts`). This reads as a
-genuinely undocumented gap between spec and reality: either a planned
-feature that was never built, or a doc duplication under a second naming
-scheme. **Flagged for a decision, not yet resolved** — implementing two new
-REST endpoints is a real feature-scope question, not a mechanical fix, and
-needs a call on whether that's in scope here.
+but have no corresponding route anywhere in `apps/meteor/server`.
+Investigated to a conclusion: this is a **pure spec-authoring mismatch,
+not a missing feature**. Rocket.Chat's real 2FA design never needs a
+separate "verify challenge" endpoint — when any request (login or
+otherwise) fails with `totp-required`, the client re-submits the
+*original* request with the code attached (confirmed in
+`apps/meteor/client/lib/2fa/process2faReturn.ts` and
+`packages/api-client/src/index.ts`'s retry-with-code logic), rather than
+POSTing to a distinct verify resource. The "send code" half is already
+covered by the real `users.2fa.sendEmailCode`, which explicitly works
+pre-login (no `authRequired`, falls back to an `emailOrUsername` lookup)
+— already tested successfully earlier in this section. The spec invented
+a challenge/verify resource pattern that doesn't match how the app
+actually authenticates. Nothing to build; the two operations stay
+excluded from testing (no real route exists to test), and no spec edit is
+warranted either — it's simply describing a shape the app never had.
 
 **Excluded via `--filter` (test-isolation, not a defect)** — `POST
 /api/v1/logout` invalidates the one shared admin token every other scenario
@@ -605,18 +612,48 @@ default, instead of leaking a raw `400`. Left as a flagged, well-evidenced
 finding rather than a blind fix, per discussion.
 
 **Second real finding — `federation/listServersByUser`/`addServerByUser`/
-`removeServerByUser`: documented, actively depended on by real frontend
-code, but no server-side implementation exists at all.** Confirmed via
-exhaustive search of both CE (`apps/meteor/server`) and EE
-(`apps/meteor/ee`) — zero route registrations anywhere for any of the
-three. Stronger evidence than the earlier missing `twoFactorChallenges.*`
-finding in `authentication.yaml`: this one has a real, live frontend
-caller — `apps/meteor/client/sidebar/header/MatrixFederationSearch/useMatrixServerList.ts:5`
-explicitly calls `useEndpoint('GET', '/v1/federation/listServersByUser')`.
-The Matrix Federation sidebar search UI feature is calling an endpoint
-that returns a plain `404` today. Same category of decision as the 2FA
-gap (a real feature-scope question, not a mechanical fix) — flagged, not
-unilaterally implemented.
+`removeServerByUser`: RESOLVED — confirmed abandoned 2023 feature, not
+touched here, recommend removing the dead UI rather than building the
+backend.** Documented in the spec, actively called by real frontend code
+(`apps/meteor/client/sidebar/header/MatrixFederationSearch/useMatrixServerList.ts:5`,
+`useEndpoint('GET', '/v1/federation/listServersByUser')`), zero
+server-side route anywhere in CE or EE. Investigated to a conclusion:
+
+- The whole `MatrixFederationSearch/` UI (add/remove a homeserver per
+  user, then search/join public rooms on it) landed in a single commit,
+  `0d9cb7fe0c` ("Matrix search UI", 2023-05-02), frontend-only. Every
+  commit to that directory since has been a mechanical refactor
+  (JSX runtime, lint rules, package moves, tanstack v5) — never backend
+  work.
+- The backend interface this was designed against,
+  `IFederationServiceEE` (`packages/core-services`), declares the exact
+  matching methods (`getSearchedServerNamesByInternalUserId`,
+  `addSearchedServerNameByInternalUserId`,
+  `removeSearchedServerNameByInternalUserId`, `searchPublicRooms`,
+  `joinExternalPublicRoom`) but **no class anywhere in the repo
+  implements it or registers the `federation-enterprise` service** — not
+  now, and no deletion commit shows it ever did.
+- The same UI also depends on two *more* unimplemented endpoints
+  (`searchPublicRooms`, `joinExternalPublicRoom`) beyond the 3 this
+  contract-testing pass found — the whole feature is a stub, not just
+  these three routes.
+- Meanwhile Rocket.Chat's real, actively-maintained Matrix federation
+  work lives in `ee/packages/federation-matrix` (commits as recent as
+  2026-07-03) and is architected around room-level bridging, with no
+  per-user "list of my servers" concept at all — this old design has been
+  superseded, not merely delayed.
+
+**Conclusion:** not a small mechanical fix (no backend data model/service
+exists to wire routes onto) and not aligned with the current federation
+architecture — building it now would mean designing a new feature against
+a superseded approach. Left unbuilt. The more useful outcome of this
+finding: `MatrixFederationSearch/`'s UI is currently live and reachable in
+the product (a real sidebar search entry point) while being **completely
+non-functional** — every action in it 404s. That's a small, real UX bug
+in its own right, independent of the spec: either finish the backend
+against the current federation architecture, or remove the dead UI so
+users don't hit a wall of 404s. Recommended to the team as a follow-up
+outside this contract-testing project's scope, not implemented here.
 
 **Minor finding, lower confidence — `dns.resolve.txt`/`dns.resolve.srv`:**
 also 404, but unlike the federation case, zero references anywhere in the
@@ -768,14 +805,25 @@ assumption.
    Moleculer broker error leaking through; the underlying service
    registers fine at boot and degrades ~3.5 hours into runtime (see
    `settings.yaml` section for full evidence and the two candidate fixes).
+   Still open — a real, unresolved app bug.
+
+**Investigated to resolution (not left as open questions):**
 2. `federation/listServersByUser`/`addServerByUser`/`removeServerByUser`
-   — documented, actively called by real frontend code
-   (`useMatrixServerList.ts`), zero server-side implementation in either
-   CE or EE. Flagged for a scope decision (build vs. deprecate), not
-   unilaterally implemented.
-3. The missing `twoFactorChallenges.sendEmailCode`/`verifyChallenge`
-   endpoints from `authentication.yaml` (same category as #2, still
-   pending your decision from earlier).
+   — traced to an abandoned 2023 frontend-only feature
+   (`MatrixFederationSearch/`) with no backend ever built and no data
+   model to build one against; superseded by the current, differently-
+   architected Matrix federation work. Not implemented (would be a real
+   feature-build against a dead design, out of scope) — recommended
+   instead that the team either finish it against current architecture
+   or remove the dead, 404-on-every-action UI. See `settings.yaml`
+   section for full evidence.
+3. `twoFactorChallenges.sendEmailCode`/`verifyChallenge`
+   (`authentication.yaml`) — confirmed a pure spec-authoring mismatch,
+   not a missing feature: Rocket.Chat's real 2FA design re-submits the
+   original request with the code rather than using a separate verify
+   endpoint, and the "send code" half is already covered by the real
+   `users.2fa.sendEmailCode`. Nothing to build. See `authentication.yaml`
+   section for full evidence.
 
 **Confirmed-still-present spec defects** (objective, not judgment calls;
 logged, never edited): `integrations.create`'s unconditional
