@@ -1,0 +1,43 @@
+volumes:
+  mongodb_data: { driver: local }
+
+services:
+  rocketchat:
+    image: ${IMAGE:-registry.rocket.chat/rocketchat/rocket.chat}:${RELEASE:-latest}
+    restart: always
+    labels:
+      DEPRECATED_COMPOSE: "${DEPRECATED_COMPOSE_ACK:?This compose file is deprecated, please migrate to https://github.com/RocketChat/rocketchat-compose}"
+    environment:
+      MONGO_URL: mongodb://mongodb:27017/rocketchat?replicaSet=rs0
+      ROOT_URL: ${ROOT_URL:-http://localhost:3000}
+      PORT: ${PORT:-3000}
+      DEPLOY_METHOD: docker
+      ADMIN_USERNAME: admin
+      ADMIN_PASS: ${RC_ADMIN_PASS:-SpecmaticAdmin123!}
+      ADMIN_EMAIL: admin@example.com
+    depends_on:
+      - mongodb
+    expose:
+      - ${PORT:-3000}
+    ports:
+      - "${BIND_IP:-0.0.0.0}:${HOST_PORT:-3000}:${PORT:-3000}"
+
+  mongodb:
+    image: mongodb/mongodb-community-server:${MONGODB_VERSION:-8.2}-ubi8
+    restart: on-failure
+    environment:
+      MONGODB_REPLICA_SET_NAME: ${MONGODB_REPLICA_SET_NAME:-rs0}
+      MONGODB_PORT_NUMBER: ${MONGODB_PORT_NUMBER:-27017}
+      MONGODB_INITIAL_PRIMARY_HOST: ${MONGODB_INITIAL_PRIMARY_HOST:-mongodb}
+    entrypoint: |
+      bash -c
+        "mongod --replSet $$MONGODB_REPLICA_SET_NAME --bind_ip_all &
+          sleep 2;
+          until mongosh --eval \"db.adminCommand('ping')\"; do
+            echo '=====> Waiting for Mongo...';
+            sleep 1;
+          done;
+          echo \"=====> Initiating ReplSet $$MONGODB_REPLICA_SET_NAME at $$MONGODB_INITIAL_PRIMARY_HOST:$$MONGODB_PORT_NUMBER...\";
+          mongosh --eval \"rs.initiate({_id: '$$MONGODB_REPLICA_SET_NAME', members: [{ _id: 0, host: '$$MONGODB_INITIAL_PRIMARY_HOST:$$MONGODB_PORT_NUMBER' }]})\";
+          echo '=====> Initiating ReplSet done...';
+        wait"
