@@ -1,0 +1,4 @@
+[submodule "specmatic-contract-testing/contracts"]
+	path = specmatic-contract-testing/contracts
+	url = https://github.com/priya3054/Rocket.Chat-Open-API.git
+	branch = main
