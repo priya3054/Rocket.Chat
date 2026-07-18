@@ -1,0 +1,46 @@
+# Overlay for ../rocketchat-docker/compose.yml. Run merged with the base
+# file so the `rocketchat` service name resolves as a hostname on the same
+# Docker network:
+#
+#   docker compose -f ../rocketchat-docker/compose.yml -f compose.test.yml --profile mock up specmatic-mock
+#
+# Note: DEPRECATED_COMPOSE_ACK must be set in the environment before the
+# base compose file will parse at all (it's a hard require() on that var).
+#
+# Note: when merging multiple -f files, Compose resolves every relative
+# bind-mount source against the directory of the FIRST file on the command
+# line, not the file the mount is declared in -- so the run command above
+# passes rocketchat-docker/compose.yml first and the path below is written
+# as ../contracts (relative to rocketchat-docker/), not ./contracts.
+#
+# All 12 specs come from one place: ../contracts, a submodule pinned to
+# priya3054/Rocket.Chat-Open-API's main branch, which is an untouched
+# mirror of upstream RocketChat/Rocket.Chat-Open-API main. No fork with
+# hand-applied fixes is in the loop here or anywhere else in this setup --
+# the spec is read-only input, never edited.
+services:
+  specmatic-mock:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["mock"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+    ports:
+      - "9000:9000"
+    command:
+      - mock
+      - /usr/src/app/specs/authentication.yaml
+      - /usr/src/app/specs/content-management.yaml
+      - /usr/src/app/specs/integrations.yaml
+      - /usr/src/app/specs/marketplace-apps.yaml
+      - /usr/src/app/specs/messaging.yaml
+      - /usr/src/app/specs/miscellaneous.yaml
+      - /usr/src/app/specs/notifications.yaml
+      - /usr/src/app/specs/omnichannel.yaml
+      - /usr/src/app/specs/rooms.yaml
+      - /usr/src/app/specs/settings.yaml
+      - /usr/src/app/specs/statistics.yaml
+      - /usr/src/app/specs/user-management.yaml
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9000"
