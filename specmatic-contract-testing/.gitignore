@@ -1,2 +1,14 @@
+# Examples written by regenerate-auth-examples.sh carry a live,
+# per-container-boot auth token -- regenerated before each test run, never
+# committed. login.json is the one example that's hand-maintained with
+# placeholder-only data and stays committed.
 specmatic/examples/get-me.json
+specmatic/examples/emoji-custom-all.json
+specmatic/examples/emoji-custom-list.json
+specmatic/examples/custom-sounds-list.json
+specmatic/examples/custom-user-status-list.json
+specmatic/examples/custom-sounds-getone-notfound.json
+specmatic/examples/custom-user-status-create.json
+specmatic/examples/custom-user-status-update.json
+specmatic/examples/custom-user-status-delete.json
 specmatic/reports/

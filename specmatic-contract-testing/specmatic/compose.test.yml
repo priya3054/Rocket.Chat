@@ -48,8 +48,9 @@ services:
   # Provider contract test, one spec file at a time (see README "Issues
   # found and fixed" for why: blending all specs together produced an
   # unreadable wall of failures on the first attempt at this project).
-  # Currently authentication.yaml only; more spec files get added to
-  # `command:` as each prior one's fixes land, per the restart plan.
+  # Swap the spec path + --filter below to whichever file is currently
+  # being triaged; each file's findings are recorded in README.md as they
+  # land, and all 12 get wired together for real CI in a later step.
   # No --config here: verified empirically against this pinned image that
   # supplying --config alongside --examples silently disables external
   # example loading entirely (0 real-credential requests sent vs. real
@@ -88,3 +89,27 @@ services:
       # - twoFactorChallenges.sendEmailCode/verifyChallenge have no
       #   corresponding route anywhere in the server code at all.
       - --filter=!(PATH='/api/v1/login - with Facebook') && !(PATH='/api/v1/login - with Twitter') && !(PATH='/api/v1/login - with Google') && !(PATH='/api/v1/logout') && !(PATH='/api/v1/twoFactorChallenges.sendEmailCode') && !(PATH='/api/v1/twoFactorChallenges.verifyChallenge')
+
+  # content-management.yaml: 5 read (list/all/getOne) + 3 write
+  # (custom-user-status create/update/delete) operations verified clean
+  # with real auth. The other 8 write operations (emoji-custom.*,
+  # custom-sounds.create/update/delete, assets.*) all require
+  # multipart/form-data file uploads and are deferred -- not filtered out,
+  # left failing and documented in README, same treatment as
+  # authentication.yaml's not-yet-wired 2FA operations.
+  specmatic-contract-test-content-management:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/reports/content-management:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/content-management.yaml
+      - --examples
+      - /usr/src/app/examples
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports

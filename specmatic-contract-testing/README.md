@@ -193,3 +193,41 @@ yet instrumented.
 operations above), 1 pass, 10 fail — all 10 accounted for by the three
 categories above (2 accepted-drift patterns across 5 scenarios, 2 not-yet-
 wired 2FA operations across 5 scenarios). Zero unexplained failures.
+
+### 2026-07-18 — Provider contract test: `content-management.yaml`
+
+16 operations (custom emoji, custom sounds, custom user status, assets).
+Real auth extended from `authentication.yaml`'s pattern — same shared
+admin token, one external example file per operation, written by the same
+`regenerate-auth-examples.sh` (now covers both spec files).
+
+**Clean pass, no drift** — 8 operations verified with real requests against
+the live app, all matching the contract exactly:
+- `emoji-custom.all`, `emoji-custom.list`, `custom-sounds.list`,
+  `custom-user-status.list` (real headers, no body needed).
+- `custom-sounds.getOne` with a nonexistent `_id` — exercises the
+  documented `404`/"Custom Sound not found" path (no custom sound exists
+  on a fresh instance, so this is the only real path testable here without
+  first uploading a file — see below).
+- `custom-user-status.create` → `update` → `delete`, a real, sequential
+  lifecycle: the script seeds one real record via a live call (unique name
+  to survive repeated script runs without a "name already in use" clash),
+  then `update`/`delete` act on that same real `_id`. All three plain-JSON
+  operations (no file upload), all passed.
+
+**Not yet resolved (scoped follow-up, deferred — same treatment as
+`authentication.yaml`'s 2FA gap)** — the remaining 8 write operations all
+require `multipart/form-data` file uploads and aren't wired yet:
+`emoji-custom.create`/`update`/`delete`, `custom-sounds.create`/`update`/
+`delete`, `assets.setAsset`/`unsetAsset`. Building real external examples
+for these means supplying actual file content (an image for emoji/assets,
+an audio file for sounds) — a meaningfully bigger lift than a JSON body,
+scoped as separate follow-up work rather than rushed. Left failing and
+documented, not filtered out.
+
+**Result:** 36 tests run, 8 pass with real requests (5 read + 3-operation
+lifecycle), 28 fail — all 28 are either the 8 deferred multipart operations
+or the same operations' own spec-declared dummy inline examples (which
+carry no real credentials by design, so they 401 regardless of our real
+example passing alongside them — same pattern seen in
+`authentication.yaml`, not a new defect). Zero unexplained failures.
