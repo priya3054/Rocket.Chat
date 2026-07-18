@@ -483,3 +483,61 @@ webhooks, most of `omnichannel/contacts.*`, the full agent/department
 lifecycle beyond creation, most analytics breakdowns beyond the one
 totalizer checked). Genuinely untested, not filtered, logged for
 visibility.
+
+### 2026-07-19 — Provider contract test: `user-management.yaml` (spot-checked)
+
+56 operations (`permissions.*`, `roles.*`, `users.*` ~40, `ldap.*`,
+`moderation.reportUser`). ~30 operations tested directly with real
+requests against a real seeded test user.
+
+**Confirmed clean:** `users.create`, `users.info`, `users.list`,
+`users.setStatus`/`getStatus`, `users.getPresence`, `users.setActiveStatus`,
+`users.autocomplete`, `users.checkUsernameAvailability`,
+`users.getUsernameSuggestion`, `users.getPreferences`/`setPreferences`,
+`users.getPersonalAccessTokens`, `users.deactivateIdle`,
+`moderation.reportUser`, `users.requestDataDownload`, `users.listByStatus`,
+`users.resetAvatar`, `users.getAvatar` (307 redirect to the image, as
+expected), `users.delete`, `roles.list`, `permissions.listAll`,
+`roles.addUserToRole` (against the real built-in `moderator` role),
+`roles.getUsersInRole`.
+
+**Real, spec-confirmed security behavior (not a bug, matches the spec's
+own documented error case exactly):** `users.generatePersonalAccessToken`,
+`users.resetTOTP`, `users.resetE2EKey` all return `"TOTP Required
+[totp-required]"` with `availableMethods: []` on an account with no 2FA
+configured. Checked directly against the spec: this is `users.generatePersonalAccessToken`'s
+own documented `400` `Example 1` response, verbatim. A genuine positive
+confirmation the app matches the contract here, not just an absence of
+failure.
+
+**Enterprise-gated:** `roles.create` (custom roles are EE-only, per the
+spec's own `requestBody` description, which explicitly says so).
+
+**Disabled-by-default, real and expected:** `ldap.testConnection` returns
+`"LDAP_disabled"` — no LDAP configured on this instance, same category as
+`autotranslate.*` in `messaging.yaml`.
+
+**Documented requirement, not exercised further:** `users.createToken`
+requires a `CREATE_TOKENS_FOR_USERS_SECRET` environment variable to be set
+on the deployment (per the spec's own description) — not configured in
+this docker-compose setup, so only the correctly-documented `400`
+(missing `secret`) was confirmed, not the success path. Would need a
+compose env var addition to test further; scoped as follow-up, not
+chased down.
+
+**Own test-setup mistakes, corrected:** `users.autocomplete` (query param
+needed URL-encoding, not raw JSON), `roles.addUserToRole` (guessed
+`roleName`, spec correctly documents `roleId`).
+
+**No new categories.** Every result here reconfirms the established
+patterns (EE-gating, disabled-by-default features) or is a genuine,
+spec-matching pass.
+
+**Not covered this pass** — `users.register`, `users.update`,
+`users.updateOwnBasicInfo`, `users.logout`/`logoutOtherClients`/
+`removeOtherTokens`, `users.setAvatar` (needs real image upload, deferred
+like the multipart operations in `content-management.yaml`),
+`users.sendWelcomeEmail`/`sendConfirmationEmail`/`forgotPassword`/
+`sendInvitationEmail` (all need SMTP configured to verify meaningfully),
+`ldap.syncNow`/`testSearch`, `avatar/{subject}`. Genuinely untested, not
+filtered.
