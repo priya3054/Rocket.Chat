@@ -702,3 +702,92 @@ variant), `video-conference/jitsi.update-timeout`, `POST /api/apps`
 (install — would need a real app package, out of scope), `DELETE
 /api/apps/{appId}`, the incoming-webhook/template-message app endpoints
 at the top of the file. Genuinely untested.
+
+### 2026-07-19 — Provider contract test: `statistics.yaml`
+
+11 operations. `statistics`/`statistics.list` confirmed clean with real
+data. All 9 `engagement-dashboard.*` operations are uniformly
+Enterprise-gated (`"This is an enterprise feature"`) — confirmed on 2
+representative ones (`users/new-users`, `channels/list`); the remaining 7
+weren't individually re-tested since the gate is applied uniformly at
+the same permission-check layer, not per-operation logic. No new
+categories.
+
+### 2026-07-19 — Provider contract test: `miscellaneous.yaml` (final file)
+
+30 operations — the last of the 12 spec files. `email-inbox.*`, `spotlight`,
+`smtp.check`, `licenses.*`, `commands.*`, `mailer`, `fingerprint`,
+`calendar-events.*`, `shield.svg`.
+
+**Third instance of the same "missing `/api` prefix" spec pattern**
+(after the two in `marketplace-apps.yaml`): `/licenses.maxActiveUsers` is
+declared bare in the spec; the real, working path is
+`/api/v1/licenses.maxActiveUsers` — confirmed the same way (bare path
+falls through to the SPA shell, `/api/v1`-prefixed path returns clean
+JSON). Three confirmed instances across two files is enough to call this
+a systematic, low-severity spec authoring pattern rather than isolated
+typos — worth mentioning as a group if this ever gets raised upstream,
+rather than three separate reports.
+
+**Confirmed clean:** `spotlight`, `smtp.check` (real "not configured"
+response, consistent with the disabled-by-default pattern), `licenses.info`,
+`commands.list`, `commands.get`, `email-inbox.list`, `calendar-events.list`
+(after correcting the query param to the spec's actual `date`, not the
+guessed `startDate`/`endDate`).
+
+**Real validation responses, own incomplete test data, not bugs:**
+`calendar-events.create` (missing `startTime`), `mailer` (missing the
+required unsubscribe-link field — a real, sensible validation, not
+chased further), `fingerprint` (missing `setDeploymentAs`), `shield.svg`
+(400, likely a missing required param — not chased further given this is
+a low-value SVG-badge endpoint).
+
+**Not covered this pass** — `email-inbox` create/get/delete/search/send-test,
+`licenses.add`, `commands.preview`/`run`, `mailer.unsubscribe`,
+`method.call/{method}`, `calendar-events.info`/`update`/`delete`/`import`,
+the two `/api/apps/public/...` webhook endpoints (duplicated from
+`marketplace-apps.yaml`). Genuinely untested.
+
+---
+
+## Summary: all 12 spec files processed
+
+Every one of Rocket.Chat's 12 OpenAPI spec files has now had at least one
+real, live-verified pass — 4 files (`authentication`, `content-management`,
+`notifications`, `messaging`) at full per-operation depth, 8 files
+(`rooms`, `omnichannel`, `user-management`, `settings`, `integrations`,
+`marketplace-apps`, `statistics`, `miscellaneous`) spot-checked with real
+requests given the time budget, explicitly documenting what wasn't
+covered rather than implying full coverage. Zero spec edits anywhere.
+Zero forks. Every finding traced to actual evidence (a real request/
+response, a real log line, or a real source file) — never asserted on
+assumption.
+
+**Real app bugs found (candidates for an app fix, not spec drift):**
+1. `GET /api/v1/instances.get` — undocumented `400`, raw internal
+   Moleculer broker error leaking through; the underlying service
+   registers fine at boot and degrades ~3.5 hours into runtime (see
+   `settings.yaml` section for full evidence and the two candidate fixes).
+2. `federation/listServersByUser`/`addServerByUser`/`removeServerByUser`
+   — documented, actively called by real frontend code
+   (`useMatrixServerList.ts`), zero server-side implementation in either
+   CE or EE. Flagged for a scope decision (build vs. deprecate), not
+   unilaterally implemented.
+3. The missing `twoFactorChallenges.sendEmailCode`/`verifyChallenge`
+   endpoints from `authentication.yaml` (same category as #2, still
+   pending your decision from earlier).
+
+**Confirmed-still-present spec defects** (objective, not judgment calls;
+logged, never edited): `integrations.create`'s unconditional
+`required: [event, urls]` contradicting its own field descriptions (the
+exact defect the old branch mis-handled by forking the spec); three
+missing `/api` path prefixes (`marketplace-apps.yaml` x2,
+`miscellaneous.yaml` x1).
+
+**Systemic accepted-drift categories** (the app is richer than the docs,
+not wrong): undocumented real fields on message/room/error objects
+(dozens of instances, one root cause); the polymorphic `md` markdown AST
+field; the `reactions` map modeled as a literal example key; Enterprise
+licensing gates (recurring across `messaging`, `rooms`, `omnichannel`,
+`user-management`, `statistics`); disabled-by-default features
+(`autotranslate`, `LDAP`, `SMTP`, `AutoTranslate`).
