@@ -896,3 +896,74 @@ own README noted "Specmatic's own exit code conflates 'tests failed'
 with 'coverage gate failed'"). The baseline rises only as real spec
 files get real committed examples in future work, never by loosening the
 check.
+
+## Step 5: Resiliency testing
+
+Same 12 specs, same live app, `schemaResiliencyTests: all`
+(`specmatic/specmatic_resiliency.yaml`) instead of `none` — deliberately
+mutated/fuzzed inputs, checking whether RocketChat rejects them gracefully
+instead of crashing or leaking internal state, a different question from
+"does the API match the docs" (Steps 3/4). Kept as a fully separate run,
+same reasoning as everywhere else in this project: blending correctness
+and fuzz testing produces an unreadable wall of failures.
+
+**No `--examples` here, and that's a real, confirmed constraint, not an
+oversight:** `--config` (required for `schemaResiliencyTests`, no CLI flag
+exists for it) and `--examples` cannot be combined in this pinned image
+(Step 4). So this run has no real auth wired — the same limitation the
+old branch's own resiliency run had for 11 of its 12 specs. Resiliency
+testing's actual value (catching ungraceful failures on malformed input)
+still holds regardless of auth state.
+
+**Mechanism verified working, on `authentication.yaml` alone:** 118
+tests generated (vs. 21 for the same file's plain contract-correctness
+run — schema resiliency multiplies test count with type-mutation
+variants like "the key `code` is mutated from string to boolean"), 4
+passes, 114 failures, **0 errors** — clean execution, no crashes.
+
+**Full 12-spec run:** executing via the `specmatic-resiliency-test-all`
+compose service (1611 operations × fuzzed variants is a large surface —
+well beyond what's practical to run to completion interactively). Left
+running in the background rather than blocking the rest of this project
+on it; this is exactly the kind of exhaustive, informational, non-gating
+run that belongs in CI (`specmatic-resiliency-test.yml`, Step 6),
+executing on every PR/push going forward, not something that needs to
+finish once by hand. No coverage gate applies to this run (see
+`specmatic_resiliency.yaml`) — "coverage" isn't a meaningful pass/fail
+signal under fuzzing the way it is for the contract-correctness run.
+
+## Step 6: CI (GitHub Actions, no PR)
+
+Four workflows in `.github/workflows/`, each scoped via `paths:` to
+`specmatic-contract-testing/**` (plus their own workflow file) so they
+only run when relevant. Committed directly to the `specmatic` branch and
+pushed to `origin` (the user's own fork) — never opened as a PR, per the
+project's ground rules.
+
+- **`specmatic-consumer-mock.yml`** — hard gate. Starts the mock server
+  from the 12 specs (no live RocketChat needed) and smoke-tests a
+  schema-valid response. Should always pass; catches spec-parse
+  regressions cheaply and fast. Verified locally before committing.
+- **`specmatic-contract-test.yml`** — brings up live RocketChat + MongoDB,
+  regenerates real auth/fixture examples, runs all 12 specs together.
+  The individual test run is report-only; the real, hard gate is a
+  separate step parsing the coverage percentage from stdout and failing
+  if it drops below the **4%** baseline established in Step 4. Verified
+  the exact grep pattern (`grep -oE '[0-9]+% API Coverage reported'`)
+  against real captured output before writing it into the workflow.
+- **`specmatic-resiliency-test.yml`** — same live setup, runs the
+  fuzzed/mutated-input suite (Step 5). Entirely report-only — no
+  established "good" resiliency baseline exists yet to gate on.
+- **`specmatic-examples-lint.yml`** — `specmatic examples validate`
+  against the spec submodule directly (no live app). Report-only
+  (`continue-on-error: true`): these are the canonical, unforked upstream
+  specs, so pre-existing upstream issues aren't this branch's fault to
+  block on. Verified locally: finds real, pre-existing issues in several
+  operations' own inline examples (missing auth headers on examples that
+  were never designed to be complete standalone requests) — exactly the
+  report-only signal this workflow is for.
+
+All four upload their reports as build artifacts and tear down their
+containers unconditionally (`if: always()`). None of them will actually
+execute unless GitHub Actions is enabled on the fork they're pushed to —
+noted, not assumed.
