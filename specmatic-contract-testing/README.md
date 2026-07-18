@@ -541,3 +541,104 @@ like the multipart operations in `content-management.yaml`),
 `sendInvitationEmail` (all need SMTP configured to verify meaningfully),
 `ldap.syncNow`/`testSearch`, `avatar/{subject}`. Genuinely untested, not
 filtered.
+
+### 2026-07-19 — Provider contract test: `settings.yaml` — real app bug found
+
+**`GET /api/v1/instances.get` — undocumented `400`, raw internal error
+leaking through, genuine time-dependent runtime bug (not a docs gap).**
+
+Calling this operation (admin-only, `view-statistics` permission,
+otherwise-correctly authenticated) returned:
+```
+HTTP 400
+{"success":false,"error":"Service '$node.list' is not available."}
+```
+The spec (`settings.yaml`) only documents `200`/`401`/`403` for this
+operation — no `400` at all, and this error text is an internal Moleculer
+broker message, not a Rocket.Chat-authored error string.
+
+**Traced to a real code path, not assumed:**
+`apps/meteor/ee/server/local-services/instance/service.ts:214` —
+`getInstances()` calls `this.broker.call('$node.list', { onlyAvailable: true })`
+unconditionally (this broker is always created/started regardless of EE
+license — only the cross-instance *broadcast* feature is license-gated,
+not this broker itself). `$node.list` is Moleculer's own built-in
+node-registry action.
+
+**Confirmed via the live container's own logs — this is the finding,
+not a guess:**
+```
+15:49:38  INFO  .../REGISTRY: '$node' service is registered.
+15:49:38  INFO  .../$NODE: Service '$node' started.
+15:49:38  INFO  .../BROKER: ✔ ServiceBroker with 2 service(s) started successfully in 567ms.
+19:15:57  WARN  .../BROKER: Service '$node.list' is not available.
+```
+The service registers and starts cleanly at container boot, then goes
+unavailable roughly 3.5 hours later during otherwise-normal runtime — a
+genuine runtime degradation, not a startup-ordering race (which is what
+I initially suspected before checking the logs).
+
+**Plausible mechanism (not fully confirmed — the honest limit of this
+investigation):** the broker is configured with `heartbeatInterval: 10s`
+/ `heartbeatTimeout: 60s` (`packages/instance-status/src/index.ts`:
+`defaultPingInterval=10`, `indexExpire=ceil(10*3/60)*60=60`) — unusually
+tight for a broker whose whole purpose is tracking cluster peers. Working
+theory: on a single-node deployment (no real peers to receive heartbeats
+from), the local node's own bookkeeping falls out of the broker's
+internal registry under these tight timeouts during an idle period.
+Fully confirming this would need live broker-internals debugging (stepping
+through Moleculer's registry GC), which is beyond what's practical here —
+flagged honestly as a strong candidate, not asserted as certain.
+
+**Why this is a real app-fix candidate, not spec/documentation drift:**
+this is the first finding in the whole project that isn't "the app does
+more/different than the spec says" — it's the app failing in a way that
+leaks internal implementation details through an authenticated admin API,
+on a genuinely common deployment shape (single-container, no clustering
+configured) after the instance has simply been running a while. Two
+independent, valid fixes exist depending on which layer owns the
+responsibility: (a) fix/relax the heartbeat timing so a solo node doesn't
+fall out of its own registry, or (b) wrap the `instances.get` route
+handler so a broker-unavailable condition degrades to the empty-list
+behavior the CE stub (`getInstanceList.ts`) already implies is the safe
+default, instead of leaking a raw `400`. Left as a flagged, well-evidenced
+finding rather than a blind fix, per discussion.
+
+**Second real finding — `federation/listServersByUser`/`addServerByUser`/
+`removeServerByUser`: documented, actively depended on by real frontend
+code, but no server-side implementation exists at all.** Confirmed via
+exhaustive search of both CE (`apps/meteor/server`) and EE
+(`apps/meteor/ee`) — zero route registrations anywhere for any of the
+three. Stronger evidence than the earlier missing `twoFactorChallenges.*`
+finding in `authentication.yaml`: this one has a real, live frontend
+caller — `apps/meteor/client/sidebar/header/MatrixFederationSearch/useMatrixServerList.ts:5`
+explicitly calls `useEndpoint('GET', '/v1/federation/listServersByUser')`.
+The Matrix Federation sidebar search UI feature is calling an endpoint
+that returns a plain `404` today. Same category of decision as the 2FA
+gap (a real feature-scope question, not a mechanical fix) — flagged, not
+unilaterally implemented.
+
+**Minor finding, lower confidence — `dns.resolve.txt`/`dns.resolve.srv`:**
+also 404, but unlike the federation case, zero references anywhere in the
+codebase (not server, not client, not EE). Likely a documentation-only
+entry describing a feature that was never built on either side, rather
+than a broken integration — noted for completeness, not pursued further.
+
+**Rest of the file, spot-checked and consistent with established
+categories:** `e2e.fetchMyKeys`, `moderation.reports` (real validation
+error, own incomplete test params), `video-conference.capabilities`/
+`.providers` (real "no provider configured" responses — same
+disabled-by-default pattern), `importers.list`, `settings.public`,
+`settings`, `settings/{_id}`, `service.configurations`, `pw.getPolicy`.
+`sessions/list` is Enterprise-gated (consistent pattern). Own test
+mistakes this pass, caught before being misreported: `settings.public`
+(shell-escaping issue with the `query` param, not a real bug),
+`dns.resolve.txt` (initially wrong method, corrected to POST — still
+404'd after correcting, which is what led to the finding above).
+
+**Not covered this pass** — `e2e.*` beyond `fetchMyKeys`, the full
+`import.*`/`getImportProgress`/etc. data-import workflow, `cloud.manualRegister`,
+`moderation.*` beyond one operation, `sessions/*` beyond `list`,
+`video-conference.start`/`join`/`cancel`, `uploadImportFile`/
+`downloadPendingFiles`/`downloadPendingAvatars`, `federation/searchPublicRooms`/
+`joinExternalPublicRoom`, `media-calls.state`. Genuinely untested.
