@@ -642,3 +642,29 @@ mistakes this pass, caught before being misreported: `settings.public`
 `video-conference.start`/`join`/`cancel`, `uploadImportFile`/
 `downloadPendingFiles`/`downloadPendingAvatars`, `federation/searchPublicRooms`/
 `joinExternalPublicRoom`, `media-calls.state`. Genuinely untested.
+
+### 2026-07-19 — Provider contract test: `integrations.yaml`
+
+13 operations (`integrations.*`, `webdav.*`, `oauth-apps.*`). Real
+integration and OAuth app created, exercised, and cleaned up.
+
+**Spec blocker, confirmed still present in the canonical (unforked)
+upstream spec — not fixed here, logged as candidate upstream issue:**
+`POST /api/v1/integrations.create`'s `requestBody.required` unconditionally
+lists `event` and `urls`, but the field descriptions explicitly say
+`event` is "**Required for outgoing integrations**" only — contradicting
+the unconditional requirement for incoming integrations. This is the
+exact same defect the old (abandoned) branch found and "fixed" by
+patching its spec fork; here it's confirmed to still be present in the
+real upstream spec, logged without touching it. Worked around by testing
+only the outgoing-integration shape (which does need `event`/`urls`),
+same as the rest of this project's approach to genuinely conditional
+requirements modeled as unconditional.
+
+**Confirmed clean:** `integrations.create` (outgoing), `integrations.get`,
+`integrations.list`, `integrations.history`, `integrations.remove`,
+`webdav.getMyAccounts`, `oauth-apps.list`, `oauth-apps.create`,
+`oauth-apps.delete`.
+
+**Not covered this pass** — `integrations.update`, `webdav.removeWebdavAccount`,
+`oauth-apps.update`/`get`. Genuinely untested.
