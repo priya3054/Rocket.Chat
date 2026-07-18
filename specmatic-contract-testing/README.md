@@ -791,3 +791,60 @@ field; the `reactions` map modeled as a literal example key; Enterprise
 licensing gates (recurring across `messaging`, `rooms`, `omnichannel`,
 `user-management`, `statistics`); disabled-by-default features
 (`autotranslate`, `LDAP`, `SMTP`, `AutoTranslate`).
+
+## Step 4: Honest coverage gate
+
+Running all 12 spec files together (`--examples` + `--lenient`, no
+`--config` — see below) against the live app:
+
+**First full run:** 1238 tests, 47 passes, 635 failures, **556 errors**.
+Nearly every error was `Cannot connect to server ... Request timeout has
+expired [request_timeout=6000 ms]`, and every one of them referenced the
+same in-flight URL, `POST /api/v1/livechat/offline.message` — a route
+whose handler (`apps/meteor/server/api/v1/omnichannel/offlineMessage.ts:11`)
+sets `rateLimiterOptions: { numRequestsAllowed: 1, intervalTimeInMS: 5000 }`.
+Initially read this as the server hanging/crashing under the rate limiter.
+
+**That reading turned out to be wrong, and it's worth recording why.**
+Trying to reproduce it in isolation, 5 rapid sequential requests to that
+exact endpoint all completed in ~0.3s each, no hang. Re-running the full
+1238-test suite with a longer client timeout (`--timeout-in-ms 15000`
+instead of Specmatic's default 6000ms) produced **zero** connection
+errors — same 1238 tests, `Errors: 0`. So the real story is: sustained
+rapid-fire automated load (1238 requests in quick succession, well beyond
+normal usage) occasionally pushed response latency past Specmatic's
+default 6-second client timeout, not a genuine hang or crash. A real,
+worth-knowing data point about latency under heavy synthetic load on a
+single, non-clustered test container — but not the "app bug" it looked
+like at first glance. Correcting this here rather than leaving the more
+alarming initial read stand uncorrected.
+
+**Coverage, confirmed stable across both runs:** **4% API coverage**,
+1611 operations eligible for coverage (measured, not assumed — Specmatic
+prints this to stdout even without `--config`). This reflects that only 4
+of 12 spec files (`authentication`, `content-management`, `notifications`,
+`messaging`) have real committed Specmatic example files; the other 8
+were spot-checked with direct `curl` (real findings, documented above)
+but that verification happened outside Specmatic's own example
+mechanism, so it doesn't count toward Specmatic's measured coverage.
+**4% is therefore the honest number, not a placeholder** — matching this
+project's own rule (and the exact thing the old branch got right once it
+stopped inflating gates).
+
+**Why no `--config`/`governance.successCriteria`:** already established
+per-file — supplying `--config` alongside `--examples` silently disables
+external example loading entirely in this pinned image (verified back in
+`authentication.yaml`'s section). `specmatic_contract.yaml` (the
+leftover config file from before that discovery) is now unused by every
+compose service and has been removed rather than left as dead,
+misleading configuration.
+
+**How the gate actually works, then:** the coverage percentage is parsed
+straight from Specmatic's own stdout (`grep -oP '\d+(?=% API Coverage)'`)
+in CI (see Step 6), compared against a stored baseline of **4%**, and
+fails the build if it drops below that — the same "parse stdout, gate in
+a separate step" approach the old branch already found necessary (its
+own README noted "Specmatic's own exit code conflates 'tests failed'
+with 'coverage gate failed'"). The baseline rises only as real spec
+files get real committed examples in future work, never by loosening the
+check.
