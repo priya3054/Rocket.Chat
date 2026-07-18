@@ -1,0 +1,36 @@
+{
+  "http-request": {
+    "path": "/api/v1/login",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "user": "admin",
+      "password": "SpecmaticAdmin123!"
+    }
+  },
+  "http-response": {
+    "status": 200,
+    "body": {
+      "status": "success",
+      "data": {
+        "authToken": "9HqLlyZOugoStsXCUfD_0YdwnNnunAJF8V47U3QHXSq",
+        "userId": "aobEdbYhXfu5hkeqG",
+        "me": {
+          "_id": "aYjNnig8BEAWeQzMh",
+          "name": "Rocket Cat",
+          "emails": [{ "address": "rocket.cat@rocket.chat", "verified": false }],
+          "status": "offline",
+          "statusConnection": "offline",
+          "username": "rocket.cat",
+          "utcOffset": -3,
+          "active": true,
+          "roles": ["admin"],
+          "settings": { "preferences": {} },
+          "avatarUrl": "http://localhost:3000/avatar/test"
+        }
+      }
+    }
+  }
+}

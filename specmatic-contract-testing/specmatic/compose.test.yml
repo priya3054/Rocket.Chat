@@ -44,3 +44,47 @@ services:
       - 0.0.0.0
       - --port
       - "9000"
+
+  # Provider contract test, one spec file at a time (see README "Issues
+  # found and fixed" for why: blending all specs together produced an
+  # unreadable wall of failures on the first attempt at this project).
+  # Currently authentication.yaml only; more spec files get added to
+  # `command:` as each prior one's fixes land, per the restart plan.
+  # No --config here: verified empirically against this pinned image that
+  # supplying --config alongside --examples silently disables external
+  # example loading entirely (0 real-credential requests sent vs. real
+  # requests with --config omitted, same specs/examples otherwise) --
+  # config-declared "examples" isn't even a valid key in this version
+  # (its own validation error lists governance/license/settings as the
+  # only top-level specmatic: properties). Since schemaResiliencyTests is
+  # off by default with no config anyway, dropping --config costs nothing
+  # for this contract-only run; --config comes back once coverage
+  # governance is wired (see README), at which point real examples need
+  # re-verifying against that combination too.
+  specmatic-contract-test:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/reports/contract:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/authentication.yaml
+      - --examples
+      - /usr/src/app/examples
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports
+      # Exclusions, each a documented spec-blocker/test-isolation case, not
+      # a spec edit -- see README "Issues found and fixed" for the evidence
+      # behind each one:
+      # - the 3 "login - with X" paths aren't real routes (ApiClass.ts
+      #   registers a single 'login' route for every login variant), so
+      #   they 404 by construction, not by app defect.
+      # - logout invalidates the one shared admin token every other
+      #   scenario in this run depends on.
+      # - twoFactorChallenges.sendEmailCode/verifyChallenge have no
+      #   corresponding route anywhere in the server code at all.
+      - --filter=!(PATH='/api/v1/login - with Facebook') && !(PATH='/api/v1/login - with Twitter') && !(PATH='/api/v1/login - with Google') && !(PATH='/api/v1/logout') && !(PATH='/api/v1/twoFactorChallenges.sendEmailCode') && !(PATH='/api/v1/twoFactorChallenges.verifyChallenge')
