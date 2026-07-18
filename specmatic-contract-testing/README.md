@@ -231,3 +231,39 @@ or the same operations' own spec-declared dummy inline examples (which
 carry no real credentials by design, so they 401 regardless of our real
 example passing alongside them — same pattern seen in
 `authentication.yaml`, not a new defect). Zero unexplained failures.
+
+### 2026-07-18 — Provider contract test: `notifications.yaml`
+
+8 operations (banners, push). All plain JSON/query params — no file
+uploads, unlike content-management.yaml's write operations.
+
+**Clean pass, no drift** — 5 operations verified with real requests:
+`GET /api/v1/banners`, `GET /api/v1/banners/{id}` (both with real headers +
+`platform=web` query), `POST /api/v1/banners.dismiss` (with a nonexistent
+`bannerId`, exercising the real, documented "Banner not found" `400` path —
+no banner exists on a fresh instance to dismiss a real one), `GET
+/api/v1/push.info`, `DELETE /api/v1/push.token`.
+
+**Accepted drift** — `POST /api/v1/push.token`'s real response field is
+`result._updatedAt`; the spec declares `result.updatedAt` (no leading
+underscore). Confirmed real and reproducible (not a typo on our side):
+every other endpoint across every spec file tested so far uses `_updatedAt`
+(the codebase's actual Mongo/Meteor convention — `emoji-custom.all`,
+`custom-sounds.list`, `custom-user-status.list` all declare and return
+`_updatedAt` correctly). This looks like a one-off spec typo (a missing
+underscore) rather than an app inconsistency — renaming the app's field to
+match would break that endpoint's consistency with every other endpoint's
+naming convention, which would be a worse outcome. Left as-is.
+
+**Not yet resolved (scoped follow-up — cross-spec dependency, not a
+same-file gap like the others)** — `GET /api/v1/push.get` needs a real
+message `_id` to test meaningfully; that requires a room and a message to
+exist, which depends on `messaging.yaml` (not yet reached in this pass).
+Deferred until messaging.yaml's real fixtures exist, rather than testing
+against a fabricated ID that would only exercise the "not found" path
+(already well-covered by other operations' not-found cases in this file).
+
+**Result:** 18 tests run, 5 pass with real requests, 13 fail — 1 is the
+genuine `_updatedAt` accepted-drift finding above, the rest are `push.get`
+(deferred) plus the same "spec's own dummy inline example lacks real
+credentials" noise pattern already established. Zero unexplained failures.

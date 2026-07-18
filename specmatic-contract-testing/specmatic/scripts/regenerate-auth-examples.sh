@@ -241,3 +241,107 @@ cat > "${EXAMPLES_DIR}/custom-user-status-delete.json" <<EOF
 EOF
 
 echo "Wrote custom-user-status create/update/delete examples (seeded _id: ${seed_id})."
+
+# notifications.yaml -- banners/push, all plain JSON/query, no file
+# uploads. push.get is deferred: it needs a real message _id, which
+# depends on messaging.yaml (rooms/messages) not yet exercised -- a
+# cross-spec fixture dependency, not a same-file quick win like the rest.
+cat > "${EXAMPLES_DIR}/banners.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/banners",
+    "method": "GET",
+    "query": { "platform": "web" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "banners": [], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/banners-by-id.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/banners/ByehQjC44FwMeiLbX",
+    "method": "GET",
+    "query": { "platform": "web" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "banners": [], "success": true } }
+}
+EOF
+
+# Exercises the real "not found" path (no banner exists to dismiss on a
+# fresh instance) -- same reasoning as custom-sounds-getone-notfound.json.
+cat > "${EXAMPLES_DIR}/banners-dismiss-notfound.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/banners.dismiss",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "bannerId": "nonexistent-banner" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "Banner not found" } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/push-info.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/push.info",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "pushGatewayEnabled": true, "defaultPushGateway": true, "success": true } }
+}
+EOF
+
+# Real "no tokens registered" 400 -- push.token create/delete below always
+# leaves zero tokens registered by the time this runs (Specmatic's own
+# scenario ordering isn't guaranteed relative to this one), so this is
+# the one real, reproducible outcome for this operation without a live
+# push gateway.
+cat > "${EXAMPLES_DIR}/push-test.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/push.test",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": {
+    "status": 400,
+    "body": { "success": false, "error": "There are no tokens for this user [error-no-tokens-for-this-user]", "errorType": "error-no-tokens-for-this-user", "details": { "method": "push_test" } }
+  }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/push-token-create.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/push.token",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "type": "gcm", "value": "specmatic-test-token", "appName": "specmatic-test-app" }
+  },
+  "http-response": {
+    "status": 200,
+    "body": {
+      "result": { "_id": "DMMjKG2hFoLvM2hk7", "token": { "gcm": "TOKEN" }, "appName": "RocketAPP", "userId": "52d5Rw8LT3TeDa59Z", "enabled": true, "createdAt": "2018-09-11T18:22:55.006Z", "updatedAt": "2018-09-11T18:22:55.006Z" },
+      "success": true
+    }
+  }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/push-token-delete.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/push.token",
+    "method": "DELETE",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "token": "specmatic-test-token" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+echo "Wrote notifications.yaml examples (push.get deferred)."

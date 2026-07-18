@@ -113,3 +113,24 @@ services:
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
       - --junitReportDir=/usr/src/app/reports
+
+  # notifications.yaml: 6 of 8 operations verified with real requests (5
+  # clean, 1 genuine drift -- push.token's real response field is
+  # `_updatedAt`, spec says `updatedAt`). push.get deferred: needs a real
+  # message _id, a cross-spec fixture dependency on messaging.yaml.
+  specmatic-contract-test-notifications:
+    image: specmatic/specmatic:2.50.0
+    profiles: ["test"]
+    volumes:
+      - ../contracts:/usr/src/app/specs:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/reports/notifications:/usr/src/app/reports
+    depends_on:
+      - rocketchat
+    command:
+      - test
+      - /usr/src/app/specs/notifications.yaml
+      - --examples
+      - /usr/src/app/examples
+      - --testBaseURL=http://rocketchat:${PORT:-3000}
+      - --junitReportDir=/usr/src/app/reports

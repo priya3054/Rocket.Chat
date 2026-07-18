@@ -11,4 +11,11 @@ specmatic/examples/custom-sounds-getone-notfound.json
 specmatic/examples/custom-user-status-create.json
 specmatic/examples/custom-user-status-update.json
 specmatic/examples/custom-user-status-delete.json
+specmatic/examples/banners.json
+specmatic/examples/banners-by-id.json
+specmatic/examples/banners-dismiss-notfound.json
+specmatic/examples/push-info.json
+specmatic/examples/push-test.json
+specmatic/examples/push-token-create.json
+specmatic/examples/push-token-delete.json
 specmatic/reports/
