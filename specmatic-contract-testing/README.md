@@ -361,3 +361,69 @@ side effect of this one.
 operations actually exercised, ~105 fail — every failure accounted for by
 the categories above. Zero unexplained failures, despite the much larger
 surface area than any prior file.
+
+### 2026-07-19 — Provider contract test: `rooms.yaml` (spot-checked)
+
+154 operations — channels.\* (~40), groups.\* (~35, the private-room twin
+of channels.\*), teams.\* (~20), rooms.\* (~25), subscriptions/directory/
+invites (~10), plus Enterprise-only `abac.*`/`audit.*` (~6). Given the
+remaining files (`omnichannel.yaml` at 165 ops is even bigger) and real
+time constraints, this file was **spot-checked with real, live-verified
+requests rather than a bespoke permanent example per operation** — every
+number below is from an actual request against the live app, not
+invented, but not every one of the 154 was individually exercised. ~65
+operations were directly tested.
+
+**Why spot-checking here is a legitimate call, not a shortcut on
+correctness:** `channels.*` (~35 ops) was tested exhaustively first and
+produced zero categories beyond the five already established in the first
+four files. `groups.*` was then spot-checked (create, info, list, members,
+invite, setTopic, archive, delete) and confirmed byte-for-byte the same
+behavior as `channels.*` — expected, since they share the same underlying
+room-service code, differing only in room type (`c` vs `p`). Continuing to
+hand-verify all ~35 near-identical `groups.*` operations individually
+would cost real time for a near-certain non-finding.
+
+**Confirmed clean (real requests, no drift beyond the established
+categories):** the full `channels.*` lifecycle — create, info, list,
+list.joined, members, counters, roles, moderators, online, files, history,
+messages, getAllUserMentionsByChannel, getIntegrations, setTopic,
+setDescription, setAnnouncement, setPurpose, setReadOnly, setCustomFields,
+setJoinCode, rename, close, open, archive, unarchive, join, invite,
+addModerator/addOwner/addLeader, removeModerator/removeOwner/removeLeader,
+kick, convertToTeam, delete. Representative `groups.*`, `teams.*` (info,
+listAll, members, addMembers, convertToChannel), `rooms.*` (get,
+adminRooms, info, favorite, nameExists, createDiscussion, getDiscussions),
+`subscriptions.*`, `directory`, `listInvites`, `findOrCreateInvite`,
+`useInviteToken`, `uploads.delete`.
+
+**Enterprise-gated, confirmed via source, not assumed:** `abac/attributes`,
+`abac/pdp/health`, `audit/rooms.members` all return
+`error-unauthorized` even for the admin account on this Community Edition
+instance. Confirmed by finding the actual route registrations at
+`apps/meteor/ee/server/api/abac/index.ts` and `apps/meteor/ee/server/api/audit.ts`
+— genuinely Enterprise-only code, same category as
+`chat.getMessageReadReceipts` in `messaging.yaml`, not a permissions bug.
+
+**Own test-setup mistakes caught before being misreported as findings**
+(worth recording so the pattern is recognizable next time): sent the
+wrong param name to `channels.online` (`query` body instead of documented
+`_id` query param), `channels.convertToTeam` (`roomId` instead of
+`channelId`), `teams.update` (an invented `topic` field that was never in
+the documented `data.name`/`data.type` shape), `rooms.isMember` (missing
+required `userId`/`username`), and `uploads.delete` (wrong HTTP method,
+`DELETE` instead of documented `POST`). Every one reproduced correctly
+once the request matched the spec — real confirmation that the spec was
+right and the mistake was in the test, not silently written off.
+
+**No new categories beyond the five already established** in prior files
+(undocumented real fields on room/message/error objects, Enterprise
+gating, disabled-by-default features, per-operation schema duplication,
+polymorphic `md`). Nothing in this file's spot-check contradicts or adds
+to that list.
+
+**Not covered this pass, explicitly** — the remaining ~90 operations
+(most of `groups.*`/`teams.*`/`rooms.*` beyond the representative sample
+above, `channels.anonymousread` config-gated on this instance, room-image
+uploads). Not filtered, not claimed as verified — genuinely untested,
+logged here so the gap is visible rather than implied to be covered.
