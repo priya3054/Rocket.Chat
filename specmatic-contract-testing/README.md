@@ -427,3 +427,59 @@ to that list.
 above, `channels.anonymousread` config-gated on this instance, room-image
 uploads). Not filtered, not claimed as verified — genuinely untested,
 logged here so the gap is visible rather than implied to be covered.
+
+### 2026-07-19 — Provider contract test: `omnichannel.yaml` (spot-checked)
+
+165 operations (`livechat.*` ~124, `omnichannel.*` ~13, `canned-responses`
+~3) — Omnichannel/livechat, a genuinely distinct domain from the rest of
+the API (not a mirror of anything tested so far), spot-checked across its
+major sub-areas rather than exhaustively, same time-driven call as
+`rooms.yaml`.
+
+**Confirmed omnichannel is actually enabled** on this instance (not
+gated off entirely) — `livechat/appearance`, `livechat/department`
+return real data, not a "disabled" error. This matters: it meant real
+functional testing was possible here, not just a uniform gate response.
+
+**Real requests, working correctly:** `livechat/department` (create, after
+supplying all three actually-required fields — `enabled`,
+`showOnRegistration`, `showOnOfflineForm` — see below), `livechat/queue`,
+`livechat/inquiries.list`, `livechat/analytics/dashboards/chats-totalizers`,
+`livechat/visitor` (create), `livechat/rooms`, `livechat/custom-fields`,
+`livechat/users/agent`, `omnichannel/contacts` (create).
+
+**Enterprise-gated, dominant pattern in this file specifically:**
+`livechat/business-hours`, `livechat/tags`, `livechat/priorities`,
+`livechat/sla`, `canned-responses` all return the license-gate response
+(`"This is an enterprise feature"` or, for `canned-responses`, a
+permission-style `error-unauthorized` — confirmed via
+`apps/meteor/ee/server/models/CannedResponse.ts` that it's genuinely EE
+code, not a real permissions gap on the admin account). Omnichannel's
+advanced routing/SLA features are far more EE-heavy than any other spec
+file tested so far — worth knowing going in if this project continues:
+expect a lower real-coverage ceiling here than elsewhere, structurally.
+
+**Real, legitimate fixture-dependent error, not a bug:** starting a
+livechat room (`GET /livechat/room?token=...`) for the visitor created
+above correctly returns `"Sorry, no online agents [no-agent-online]"` —
+correct behavior given no agent is registered/online in this test
+instance; not pursued further (registering and bringing an agent online
+is a bigger fixture lift, out of scope for this spot-check).
+
+**Own test-setup mistakes caught, not real bugs:** `livechat/users/agent`
+(guessed wrong initial path shape), `omnichannel/contacts` (used `GET`,
+spec says `POST`), `livechat/department` create (initially missing 3
+required fields, only visible one at a time as the app validates them
+sequentially — the spec's own `Success Example` response documents all
+three, which is what caught it).
+
+**No new categories beyond the six now established** across every file
+(the five from before, plus this file's confirmation that Enterprise
+gating is a first-class, recurring pattern, not a one-off).
+
+**Not covered this pass, explicitly** — the ~140 remaining operations
+(most of `livechat.*`'s CRUD depth: triggers, monitors, integrations,
+webhooks, most of `omnichannel/contacts.*`, the full agent/department
+lifecycle beyond creation, most analytics breakdowns beyond the one
+totalizer checked). Genuinely untested, not filtered, logged for
+visibility.
