@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous" "${EXAMPLES_DIR}/user-management"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous" "${EXAMPLES_DIR}/user-management" "${EXAMPLES_DIR}/settings"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -1811,3 +1811,151 @@ cat > "${EXAMPLES_DIR}/user-management/users-delete.json" <<EOF
 EOF
 
 echo "Wrote users.delete example, disposable test user removed. Deferred (too risky against the admin session this whole script depends on): users.logout, users.deleteOwnAccount."
+
+# settings.yaml -- ~29 of 61 operations are real and tractable without
+# real E2E room setup, file-upload-based imports, or real cloud/OAuth
+# provider registration. instances.get (real bug, already documented) and
+# federation.* (dead feature, already documented) are covered by prior
+# findings, not new examples here. media-calls.state already has its
+# overlay fix (see Step 5). Deferred, not fabricated: e2e.setRoomKeyID/
+# setUserPublicAndPrivateKeys/updateGroupKey/requestSubscriptionKeys/
+# getUsersOfRoomWithoutKey (need a real E2E-enabled room), the whole
+# import.*/uploadImportFile/downloadPublicImportFile/startImport/
+# getImportFileData/getLatestImportOperations/downloadPendingFiles/
+# downloadPendingAvatars group (needs a real uploaded import file),
+# cloud.manualRegister (needs real Rocket.Chat Cloud registration),
+# video-conference.start/join/cancel (confirmed live: "no-videoconf-
+# provider-app", no video conference app installed on this instance),
+# dns.resolve.txt/srv (already-documented 404, see earlier finding),
+# moderation.user.deleteReportedMessages (deliberately not risked against
+# the real fixture messages other spec files' examples still depend on).
+MSG_ID_FOR_MODERATION=$(printf '%s' "$MSG_TS" > /dev/null; echo "${MSG_ID:-}")
+
+# settings.public genuinely doesn't declare X-Auth-Token/X-User-Id
+# (confirmed by reading the spec) -- matches the same pattern already
+# documented for users.getStatus/sendConfirmationEmail in
+# user-management.yaml (and, unlike those, this operation happens to be
+# genuinely public/unauthenticated in practice, since it's meant to
+# expose only the settings marked public).
+cat > "${EXAMPLES_DIR}/settings/settings-public.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings.public", "method": "GET", "query": { "_id": "Site_Url" } }, "http-response": { "status": 200, "body": { "settings": [{ "_id": "Site_Url", "value": "http://localhost:3000" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+# Same spec gap -- no parameters declared at all, including auth headers
+# the real app does require for this one.
+cat > "${EXAMPLES_DIR}/settings/settings-oauth.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings.oauth", "method": "GET" }, "http-response": { "status": 200, "body": { "services": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/settings-all.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings", "method": "GET", "query": { "includeDefaults": "true", "count": "1" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "settings": [{ "_id": "API_Allow_Infinite_Count", "value": true }], "count": 1, "offset": 0, "total": 865, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/settings-id-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings/Site_Url", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "_id": "Site_Url", "value": "http://localhost:3000", "success": true } } }
+EOF
+
+# Requires TOTP unconditionally, same pattern already documented for
+# user-management.yaml.
+cat > "${EXAMPLES_DIR}/settings/settings-id-post-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings/Site_Url", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "value": "http://localhost:3000" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+# Same as settings.public/settings.oauth above -- genuinely public,
+# confirmed working with zero auth headers live; spec is accurate here.
+cat > "${EXAMPLES_DIR}/settings/service-configurations.json" <<EOF
+{ "http-request": { "path": "/api/v1/service.configurations", "method": "GET" }, "http-response": { "status": 200, "body": { "configurations": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/pw-getPolicy.json" <<EOF
+{ "http-request": { "path": "/api/v1/pw.getPolicy", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "enabled": true, "policy": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-reports.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.reports", "method": "GET", "query": { "msgId": "${MSG_ID_FOR_MODERATION}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "reports": [{ "_id": "seed-report" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-reportInfo.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.reportInfo", "method": "GET", "query": { "reportId": "6a5cc81f571e812c2a6bbb59" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "report": { "_id": "6a5cc81f571e812c2a6bbb59" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-reportsByUsers.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.reportsByUsers", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "reports": [{ "count": 1 }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-userReports.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.userReports", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "reports": [{ "count": 1 }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-user-reportedMessages.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.user.reportedMessages", "method": "GET", "query": { "userId": "${user_id}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "user": { "_id": "${user_id}" }, "messages": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-user-reportsByUserId.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.user.reportsByUserId", "method": "GET", "query": { "userId": "${user_id}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "user": { "_id": "${user_id}" }, "reports": [], "count": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-dismissReports.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.dismissReports", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "msgId": "${MSG_ID_FOR_MODERATION}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/moderation-dismissUserReports.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.dismissUserReports", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/e2e-fetchMyKeys.json" <<EOF
+{ "http-request": { "path": "/api/v1/e2e.fetchMyKeys", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/importers-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/importers.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": [{ "key": "csv", "name": "CSV" }] } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/import-status.json" <<EOF
+{ "http-request": { "path": "/api/v1/import.status", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "state": "none", "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/getCurrentImportOperation.json" <<EOF
+{ "http-request": { "path": "/api/v1/getCurrentImportOperation", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# no-videoconf-provider-app is real, live behavior -- no video conference
+# app is installed on this instance (matches marketplace-apps.yaml
+# findings), not a bug.
+cat > "${EXAMPLES_DIR}/settings/video-conference-capabilities-noprovider.json" <<EOF
+{ "http-request": { "path": "/api/v1/video-conference.capabilities", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "no-videoconf-provider-app" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/video-conference-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/video-conference.list", "method": "GET", "query": { "roomId": "GENERAL" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "data": [], "offset": 0, "count": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/video-conference-providers.json" <<EOF
+{ "http-request": { "path": "/api/v1/video-conference.providers", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "data": [], "success": true } } }
+EOF
+
+# Enterprise-gated (sessions.* is EE-only session management, same
+# category as roles.create/update).
+for op in "sessions-list:/api/v1/sessions/list" "sessions-list-all:/api/v1/sessions/list.all" "sessions-info:/api/v1/sessions/info" "sessions-info-admin:/api/v1/sessions/info.admin"; do
+  fname="${op%%:*}"
+  path="${op#*:}"
+  cat > "${EXAMPLES_DIR}/settings/${fname}-ee.json" <<EOF
+{ "http-request": { "path": "${path}", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+done
+
+cat > "${EXAMPLES_DIR}/settings/sessions-logout-me.json" <<EOF
+{ "http-request": { "path": "/api/v1/sessions/logout.me", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/settings/sessions-logout-ee.json" <<EOF
+{ "http-request": { "path": "/api/v1/sessions/logout", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+
+# addCustomOAuth and the /settings/{_id} POST above both require TOTP
+# unconditionally, same pattern as user-management.yaml.
+cat > "${EXAMPLES_DIR}/settings/settings-addCustomOAuth-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/settings.addCustomOAuth", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-oauth-$(date +%s)-$$" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+echo "Wrote settings.yaml examples (~29 real/documented, moderation reportId/msgId real: 6a5cc81f571e812c2a6bbb59 / ${MSG_ID_FOR_MODERATION})."

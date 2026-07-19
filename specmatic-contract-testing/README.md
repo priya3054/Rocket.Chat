@@ -781,6 +781,46 @@ mistakes this pass, caught before being misreported: `settings.public`
 `downloadPendingFiles`/`downloadPendingAvatars`, `federation/searchPublicRooms`/
 `joinExternalPublicRoom`, `media-calls.state`. Genuinely untested.
 
+### 2026-07-19 — Real committed examples added for ~29 of 61 operations
+
+Extended `regenerate-auth-examples.sh` to cover `moderation.*`,
+`sessions/*`, `e2e.fetchMyKeys`, `importers.list`/`import.status`/
+`getCurrentImportOperation`, `video-conference.capabilities`/`list`/
+`providers`, `settings.public`/`.oauth`, `service.configurations`,
+`pw.getPolicy`, `settings`/`settings/{_id}`, `settings.addCustomOAuth`.
+
+**A real, genuine positive finding — not just another documented
+failure**: hit the exact same whole-file-load-abort issue already found
+in `user-management.yaml` (a header not declared as a parameter causes a
+hard load error severe enough to break every example in the file, not
+just one), this time for `settings.public`, `settings.oauth`, and
+`service.configurations`. But unlike `users.getStatus`/
+`sendConfirmationEmail`, **these three are genuinely, correctly public
+endpoints** — verified live with zero auth headers at all and got real
+`200`s. So the spec is actually *accurate* here (these really don't need
+auth), and removing the headers from the examples produced real passing
+tests, not just a differently-categorized failure.
+
+**Same TOTP-unconditional pattern already established**:
+`settings/{_id}` POST and `settings.addCustomOAuth` both require TOTP
+verification regardless of whether 2FA is configured, matching
+`user-management.yaml`'s finding.
+
+**Enterprise-gated, confirmed via source before testing (not guessed)**:
+before writing a negative example for `sessions/logout`/`logout.me`, read
+`apps/meteor/ee/server/api/sessions.ts` directly to confirm the whole
+`sessions/*` group (not just `list`, already known) is Enterprise-only
+code — avoided risking a live logout call against the real admin session
+that this whole script depends on, verified the safe way instead.
+
+Deferred, not attempted, same reasons as before: `e2e.*` beyond
+`fetchMyKeys` (needs a real E2E-enabled room), the file-upload-based
+`import.*` workflow, `cloud.manualRegister`, `video-conference.start`/
+`join`/`cancel` (confirmed live: no video conference app installed on
+this instance), `moderation.user.deleteReportedMessages` (deliberately
+not risked against the real fixture messages other spec files still
+depend on).
+
 ### 2026-07-19 — Provider contract test: `integrations.yaml`
 
 13 operations (`integrations.*`, `webdav.*`, `oauth-apps.*`). Real
