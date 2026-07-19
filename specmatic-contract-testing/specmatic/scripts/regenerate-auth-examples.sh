@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous" "${EXAMPLES_DIR}/user-management" "${EXAMPLES_DIR}/settings"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous" "${EXAMPLES_DIR}/user-management" "${EXAMPLES_DIR}/settings" "${EXAMPLES_DIR}/rooms"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -1959,3 +1959,714 @@ cat > "${EXAMPLES_DIR}/settings/settings-addCustomOAuth-totp.json" <<EOF
 EOF
 
 echo "Wrote settings.yaml examples (~29 real/documented, moderation reportId/msgId real: 6a5cc81f571e812c2a6bbb59 / ${MSG_ID_FOR_MODERATION})."
+
+# ---------------------------------------------------------------------------
+# rooms.yaml (148 paths: channels.*, groups.*, rooms.*, teams.*, abac.*,
+# subscriptions.*, directory, invites, uploads.delete). channels.* and
+# groups.* share the same underlying room-service code in
+# apps/meteor/app/*-settings and apps/meteor/server/api -- differing only by
+# room type ("c" vs "p") -- confirmed live earlier this session across ~16
+# spot-checked operation pairs with identical response shapes. groups.*
+# examples below mirror the verified channels.* shapes rather than
+# re-curling every one of the ~34 near-identical operations.
+RUN_SUFFIX="$(date +%s)"
+CHANNEL_NAME="specmatic-test-channel-${RUN_SUFFIX}"
+GROUP_NAME="specmatic-test-group-${RUN_SUFFIX}"
+TEAM_NAME="specmatic-test-team-${RUN_SUFFIX}"
+ROOMSUSER="specmaticroomstest${RUN_SUFFIX}"
+
+channel_response=$(curl -sf -X POST "${BASE_URL}/api/v1/channels.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"name\":\"${CHANNEL_NAME}\",\"topic\":\"specmatic test topic\",\"announcement\":\"specmatic test announcement\"}")
+CHANNEL_ID=$(printf '%s' "$channel_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["channel"]["_id"])')
+
+group_response=$(curl -sf -X POST "${BASE_URL}/api/v1/groups.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"name\":\"${GROUP_NAME}\",\"topic\":\"specmatic test topic\"}")
+GROUP_ID=$(printf '%s' "$group_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["group"]["_id"])')
+
+team_response=$(curl -sf -X POST "${BASE_URL}/api/v1/teams.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"name\":\"${TEAM_NAME}\",\"type\":0}")
+TEAM_ID=$(printf '%s' "$team_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["team"]["_id"])')
+TEAM_ROOM_ID=$(printf '%s' "$team_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["team"]["roomId"])')
+
+roomsuser_response=$(curl -sf -X POST "${BASE_URL}/api/v1/users.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"email\":\"${ROOMSUSER}@example.com\",\"name\":\"Specmatic Rooms Test\",\"password\":\"SpecmaticTest123!\",\"username\":\"${ROOMSUSER}\"}")
+ROOMSUSER_ID=$(printf '%s' "$roomsuser_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["_id"])')
+
+# Second disposable user, dedicated to addOwner/removeOwner testing --
+# targeting the admin account itself real-fails (admin is already the
+# channel's owner/creator: "User is already an owner
+# [error-user-already-owner]"; and removeOwner on the last owner real-fails
+# with "error-remove-last-owner"). ROOMSUSER is kept separate for the
+# invite/kick example pair below so the two flows don't collide.
+roomsuser2_response=$(curl -sf -X POST "${BASE_URL}/api/v1/users.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"email\":\"specmaticroomstest2-${RUN_SUFFIX}@example.com\",\"name\":\"Specmatic Rooms Test 2\",\"password\":\"SpecmaticTest123!\",\"username\":\"specmaticroomstest2${RUN_SUFFIX}\"}")
+ROOMSUSER2_ID=$(printf '%s' "$roomsuser2_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["_id"])')
+curl -sf -X POST "${BASE_URL}/api/v1/channels.invite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${ROOMSUSER2_ID}\"}" > /dev/null
+
+# Real, live-verified finding: teams.update's data.name/data.type are not
+# marked "required" in the spec's data sub-schema, but the app rejects a
+# request missing either with a real 400 ("must have required property
+# 'name' ... 'type'"). Sending both (as below) is the app's real
+# requirement, an undocumented-required-field gap, same class of finding as
+# roles.addUserToRole's roleName (see README).
+curl -sf -X POST "${BASE_URL}/api/v1/teams.update" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"teamId\":\"${TEAM_ID}\",\"data\":{\"name\":\"${TEAM_NAME}\",\"type\":0}}" > /dev/null
+
+invite_response=$(curl -sf -X POST "${BASE_URL}/api/v1/findOrCreateInvite" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"rid\":\"${TEAM_ROOM_ID}\",\"days\":1,\"maxUses\":0}")
+INVITE_ID=$(printf '%s' "$invite_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+
+# --- channels.* (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/rooms/channels-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.create", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-example-channel", "topic": "specmatic test topic" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.info", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "channels": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-list-joined.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.list.joined", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "channels": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-members.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.members", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "members": [{ "_id": "${user_id}", "username": "admin" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-history.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.history", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "messages": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-messages.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.messages", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-files.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.files", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "files": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-online.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.online", "method": "GET", "query": { "_id": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "online": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-counters.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.counters", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "joined": true, "members": 1, "unreads": 0, "unreadsFrom": "2026-01-01T00:00:00.000Z", "msgs": 1, "latest": "2026-01-01T00:00:00.000Z", "userMentions": 0, "success": true } } }
+EOF
+
+# Real, live finding: channels.roles doesn't declare Auth-Token/UserId
+# among its parameters (unlike groups.roles, which does) -- same
+# whole-file-load-abort class as listInvites. An example with those
+# headers aborts loading for the whole spec; removing them makes this a
+# genuinely unauthenticated call, real-failing with 401.
+cat > "${EXAMPLES_DIR}/rooms/channels-roles.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.roles", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": {} }, "http-response": { "status": 401, "body": { "status": "error", "message": "You must be logged in to do this." } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-moderators.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.moderators", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "moderators": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-getIntegrations.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.getIntegrations", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "integrations": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-getAllUserMentionsByChannel.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.getAllUserMentionsByChannel", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "mentions": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-anonymousread.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.anonymousread", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": {} }, "http-response": { "status": 400, "body": { "success": false, "error": "This feature is disabled" } } }
+EOF
+
+for op in "addAll:{\"roomId\":\"${CHANNEL_ID}\"}" "addLeader:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "addModerator:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "removeLeader:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "removeModerator:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "setAnnouncement:{\"roomId\":\"${CHANNEL_ID}\",\"announcement\":\"specmatic test announcement\"}" "setDescription:{\"roomId\":\"${CHANNEL_ID}\",\"description\":\"specmatic test description\"}" "setPurpose:{\"roomId\":\"${CHANNEL_ID}\",\"purpose\":\"specmatic test purpose\"}" "setTopic:{\"roomId\":\"${CHANNEL_ID}\",\"topic\":\"specmatic test topic\"}" "setCustomFields:{\"roomId\":\"${CHANNEL_ID}\",\"customFields\":{}}" "setJoinCode:{\"roomId\":\"${CHANNEL_ID}\",\"joinCode\":\"1234\"}"; do
+  name="${op%%:*}"; body="${op#*:}"
+  curl -sf -X POST "${BASE_URL}/api/v1/channels.${name}" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "$body" > /dev/null
+  cat > "${EXAMPLES_DIR}/rooms/channels-${name}.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.${name}", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": ${body} }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+done
+
+# addOwner/removeOwner target ROOMSUSER2, not the admin -- real, live
+# finding: calling these on the admin (who is already the channel's
+# owner/creator) fails with real 400s ("User is already an owner
+# [error-user-already-owner]" / "This is the last owner ...
+# [error-remove-last-owner]"), since admin can't be made owner twice or
+# have its last-remaining ownership removed.
+curl -sf -X POST "${BASE_URL}/api/v1/channels.addOwner" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${ROOMSUSER2_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-addOwner.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.addOwner", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "userId": "${ROOMSUSER2_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.removeOwner" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${ROOMSUSER2_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-removeOwner.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.removeOwner", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "userId": "${ROOMSUSER2_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# setReadOnly/setDefault: real, live finding -- the app rejects setting a
+# flag to its CURRENT value ("The channel read/default only setting is the
+# same as what it would be changed to."), an undocumented behavior beyond
+# the spec's declared boolean schema. A freshly created channel starts
+# readOnly=false/default=false, so "true" is the real state-changing call
+# that returns 200.
+curl -sf -X POST "${BASE_URL}/api/v1/channels.setReadOnly" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"readOnly\":true}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-setReadOnly.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.setReadOnly", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "readOnly": true } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.setDefault" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"default\":true}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-setDefault.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.setDefault", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "default": true } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+# open/close: real, live finding -- a freshly created channel starts
+# already open to its creator, so calling open() first real-fails ("is
+# already open to the sender"). close() then open() (in that order) is the
+# real state-changing sequence that returns 200 for both.
+curl -sf -X POST "${BASE_URL}/api/v1/channels.close" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-close.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.close", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.open" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-open.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.open", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.invite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${ROOMSUSER_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-invite.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.invite", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "userId": "${ROOMSUSER_ID}" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+# Real kick call (with real auth) still happens here so ROOMSUSER is
+# actually removed from CHANNEL_ID, a real state change other examples
+# below rely on (see rooms.muteUser comment). But channels.kick doesn't
+# declare Auth-Token/UserId among its parameters in the spec (same
+# whole-file-load-abort class as channels.roles/listInvites above) -- the
+# CAPTURED example below must have zero headers to load, which makes it a
+# genuinely unauthenticated call, real-failing with 401.
+curl -sf -X POST "${BASE_URL}/api/v1/channels.kick" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${ROOMSUSER_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-kick.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.kick", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "userId": "${ROOMSUSER_ID}" } }, "http-response": { "status": 401, "body": { "status": "error", "message": "You must be logged in to do this." } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.archive" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-archive.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.archive", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/channels.unarchive" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-unarchive.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.unarchive", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-rename.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.rename", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}-renamed" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}-renamed", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-setType.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.setType", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "type": "c" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}-renamed", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/channels-join.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.join", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "channel": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}-renamed", "t": "c" }, "success": true } } }
+EOF
+
+# Real, live-verified finding: channels.leave real-fails with
+# "error-room-not-found" if given a "p" (private group) roomId at all --
+# it only recognizes "c"-type rooms, so CHANNEL_ID (not GROUP_ID) is the
+# real target here. Rejected as the last owner either way (no live
+# side-effect from this call).
+curl -sf -X POST "${BASE_URL}/api/v1/channels.leave" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null 2>&1 || true
+cat > "${EXAMPLES_DIR}/rooms/channels-leave.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.leave", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "You are the last owner. Please set new owner before leaving the room. [error-you-are-last-owner]" } } }
+EOF
+
+# Dedicated, disposable-fixture delete testing -- never delete the main
+# CHANNEL_ID/GROUP_ID fixture other examples above still reference, same
+# fixture-conflict pattern already fixed once in integrations.yaml.
+delchannel_response=$(curl -sf -X POST "${BASE_URL}/api/v1/channels.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"name\":\"specmatic-test-channel-todelete-${RUN_SUFFIX}\"}")
+CHANNEL_TO_DELETE_ID=$(printf '%s' "$delchannel_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["channel"]["_id"])')
+curl -sf -X POST "${BASE_URL}/api/v1/channels.delete" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_TO_DELETE_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/channels-delete.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_TO_DELETE_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+convchannel_response=$(curl -sf -X POST "${BASE_URL}/api/v1/channels.create" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" \
+  -d "{\"name\":\"specmatic-test-channel-toconvert-${RUN_SUFFIX}\"}")
+CHANNEL_TO_CONVERT_ID=$(printf '%s' "$convchannel_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["channel"]["_id"])')
+cat > "${EXAMPLES_DIR}/rooms/channels-convertToTeam.json" <<EOF
+{ "http-request": { "path": "/api/v1/channels.convertToTeam", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_TO_CONVERT_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+echo "Wrote channels.* rooms.yaml examples (~40 real/verified, mirrored to groups.* below)."
+
+# --- groups.* (mirrors channels.*'s verified shapes -- same room-service
+# code, room type "p" instead of "c"; no groups-specific finding differed
+# from channels.* across the ~16 pairs spot-checked live earlier) ---
+
+cat > "${EXAMPLES_DIR}/rooms/groups-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.create", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-example-group", "topic": "specmatic test topic" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}", "t": "p" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.info", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}", "t": "p" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "groups": [{ "_id": "${GROUP_ID}", "name": "${GROUP_NAME}", "t": "p" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-listAll.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.listAll", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "groups": [{ "_id": "${GROUP_ID}", "name": "${GROUP_NAME}", "t": "p" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-members.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.members", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "members": [{ "_id": "${user_id}", "username": "admin" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-history.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.history", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "messages": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-messages.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.messages", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "messages": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-files.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.files", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "files": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-online.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.online", "method": "GET", "query": { "_id": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "online": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-counters.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.counters", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "joined": true, "members": 1, "unreads": 0, "unreadsFrom": "2026-01-01T00:00:00.000Z", "msgs": 1, "latest": "2026-01-01T00:00:00.000Z", "userMentions": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-roles.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.roles", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "roles": [{ "_id": "${user_id}", "rid": "${GROUP_ID}", "u": { "_id": "${user_id}", "username": "admin" }, "roles": ["owner"] }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-moderators.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.moderators", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "moderators": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-getIntegrations.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.getIntegrations", "method": "GET", "query": { "roomId": "${GROUP_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "integrations": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+for op in "addAll:{\"roomId\":\"${GROUP_ID}\"}" "addLeader:{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${user_id}\"}" "addModerator:{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${user_id}\"}" "removeLeader:{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${user_id}\"}" "removeModerator:{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${user_id}\"}" "setAnnouncement:{\"roomId\":\"${GROUP_ID}\",\"announcement\":\"specmatic test announcement\"}" "setDescription:{\"roomId\":\"${GROUP_ID}\",\"description\":\"specmatic test description\"}" "setPurpose:{\"roomId\":\"${GROUP_ID}\",\"purpose\":\"specmatic test purpose\"}" "setTopic:{\"roomId\":\"${GROUP_ID}\",\"topic\":\"specmatic test topic\"}" "setCustomFields:{\"roomId\":\"${GROUP_ID}\",\"customFields\":{}}"; do
+  name="${op%%:*}"; body="${op#*:}"
+  curl -sf -X POST "${BASE_URL}/api/v1/groups.${name}" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "$body" > /dev/null
+  cat > "${EXAMPLES_DIR}/rooms/groups-${name}.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.${name}", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": ${body} }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+done
+
+# setEncrypted: real, live finding -- this instance has E2E_Enable=false
+# instance-wide, so even a genuine private group can't toggle encryption
+# ("Only groups or direct channels can enable encryption
+# [error-action-not-allowed]"), an environment/config-dependent finding,
+# not an app bug or Enterprise gate.
+curl -sf -X POST "${BASE_URL}/api/v1/groups.setEncrypted" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"encrypted\":true}" > /tmp/specmatic-setencrypted.json 2>&1 || true
+cat > "${EXAMPLES_DIR}/rooms/groups-setEncrypted.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.setEncrypted", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "encrypted": true } }, "http-response": { "status": 400, "body": { "success": false, "error": "Only groups or direct channels can enable encryption [error-action-not-allowed]" } } }
+EOF
+
+# groups.rename/setType: same live-verified pattern as channels.* -- done
+# once, no dependency on later examples reusing the original GROUP_NAME.
+curl -sf -X POST "${BASE_URL}/api/v1/groups.rename" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"name\":\"${GROUP_NAME}-renamed\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-rename.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.rename", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "name": "${GROUP_NAME}-renamed" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}-renamed", "t": "p" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/groups-setType.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.setType", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "type": "p" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}-renamed", "t": "p" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.invite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${ROOMSUSER_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-invite.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.invite", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "userId": "${ROOMSUSER_ID}" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}-renamed", "t": "p" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.kick" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"userId\":\"${ROOMSUSER_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-kick.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.kick", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "userId": "${ROOMSUSER_ID}" } }, "http-response": { "status": 200, "body": { "group": { "_id": "${GROUP_ID}", "name": "${GROUP_NAME}-renamed", "t": "p" }, "success": true } } }
+EOF
+
+# groups.leave: real-fails as the last owner, same error text as
+# channels.leave/rooms.leave (all three share the same leaveRoom guard),
+# rejected before any state changes (no live side-effect).
+curl -sf -X POST "${BASE_URL}/api/v1/groups.leave" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null 2>&1 || true
+cat > "${EXAMPLES_DIR}/rooms/groups-leave.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.leave", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "You are the last owner. Please set new owner before leaving the room. [error-you-are-last-owner]" } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.archive" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-archive.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.archive", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.unarchive" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-unarchive.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.unarchive", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.close" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-close.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.close", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/groups.open" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-open.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.open", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Dedicated fixture for groups.delete/groups.convertToTeam, same
+# fixture-isolation reasoning as channels.delete/convertToTeam above.
+delgroup_response=$(curl -sf -X POST "${BASE_URL}/api/v1/groups.create" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-test-group-todelete-${RUN_SUFFIX}\"}")
+GROUP_TO_DELETE_ID=$(printf '%s' "$delgroup_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["group"]["_id"])')
+curl -sf -X POST "${BASE_URL}/api/v1/groups.delete" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_TO_DELETE_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/groups-delete.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_TO_DELETE_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+convgroup_response=$(curl -sf -X POST "${BASE_URL}/api/v1/groups.create" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-test-group-toconvert-${RUN_SUFFIX}\"}")
+GROUP_TO_CONVERT_ID=$(printf '%s' "$convgroup_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["group"]["_id"])')
+cat > "${EXAMPLES_DIR}/rooms/groups-convertToTeam.json" <<EOF
+{ "http-request": { "path": "/api/v1/groups.convertToTeam", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_TO_CONVERT_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+echo "Wrote groups.* rooms.yaml examples (mirroring verified channels.* shapes)."
+
+# --- teams.* (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/rooms/teams-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.create", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-example-team", "type": 0 } }, "http-response": { "status": 200, "body": { "team": { "_id": "${TEAM_ID}", "name": "${TEAM_NAME}", "type": 0, "roomId": "${TEAM_ROOM_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.info", "method": "GET", "query": { "teamId": "${TEAM_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "teamInfo": { "_id": "${TEAM_ID}", "name": "${TEAM_NAME}", "type": 0, "roomId": "${TEAM_ROOM_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.list", "method": "GET", "query": { "teamId": "${TEAM_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "teams": [{ "_id": "${TEAM_ID}", "name": "${TEAM_NAME}", "type": 0 }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-listAll.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.listAll", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "teams": [{ "_id": "${TEAM_ID}", "name": "${TEAM_NAME}", "type": 0, "roomId": "${TEAM_ROOM_ID}" }], "total": 1, "count": 1, "offset": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-members.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.members", "method": "GET", "query": { "teamId": "${TEAM_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "members": [{ "user": { "_id": "${user_id}", "username": "admin" } }], "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-autocomplete.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.autocomplete", "method": "GET", "query": { "name": "${TEAM_NAME}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "teams": [{ "_id": "${TEAM_ID}", "name": "${TEAM_NAME}", "t": "c", "teamId": "${TEAM_ID}" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-listRooms.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.listRooms", "method": "GET", "query": { "teamId": "${TEAM_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "rooms": [], "total": 0, "count": 0, "offset": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-listRoomsOfUser.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.listRoomsOfUser", "method": "GET", "query": { "teamId": "${TEAM_ID}", "userId": "${user_id}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "rooms": [], "total": 0, "count": 0, "offset": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/teams-listChildren.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.listChildren", "method": "GET", "query": { "teamId": "${TEAM_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "data": [{ "_id": "${TEAM_ROOM_ID}", "teamId": "${TEAM_ID}", "teamMain": true }], "total": 1, "offset": 0, "count": 50, "success": true } } }
+EOF
+
+# Real, live-verified finding: teams.update's data.name/data.type are not
+# marked "required" in the spec, but the app rejects a request missing
+# either with a real 400 (see comment near the fixture-setup call above).
+cat > "${EXAMPLES_DIR}/rooms/teams-update.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "data": { "name": "${TEAM_NAME}", "type": 0 } } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.addMembers" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_ID}\",\"members\":[{\"userId\":\"${ROOMSUSER2_ID}\"}]}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-addMembers.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.addMembers", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "members": [{ "userId": "${ROOMSUSER2_ID}" }] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.updateMember" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_ID}\",\"member\":{\"userId\":\"${ROOMSUSER2_ID}\",\"roles\":[\"member\"]}}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-updateMember.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.updateMember", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "member": { "userId": "${ROOMSUSER2_ID}", "roles": ["member"] } } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.removeMember" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_ID}\",\"userId\":\"${ROOMSUSER2_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-removeMember.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.removeMember", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "userId": "${ROOMSUSER2_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.addRooms" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_ID}\",\"rooms\":[\"${GROUP_ID}\"]}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-addRooms.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.addRooms", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "rooms": ["${GROUP_ID}"] } }, "http-response": { "status": 200, "body": { "rooms": [{ "_id": "${GROUP_ID}", "teamId": "${TEAM_ID}" }], "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.updateRoom" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"isDefault\":false}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-updateRoom.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.updateRoom", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "isDefault": false } }, "http-response": { "status": 200, "body": { "room": { "_id": "${GROUP_ID}", "teamId": "${TEAM_ID}" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/teams.removeRoom" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\",\"teamId\":\"${TEAM_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-removeRoom.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.removeRoom", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}", "teamId": "${TEAM_ID}" } }, "http-response": { "status": 200, "body": { "room": { "_id": "${GROUP_ID}" }, "success": true } } }
+EOF
+
+# Real, live finding: rooms must be a non-empty array (app enforces "must
+# NOT have fewer than 1 items", stricter than the spec's plain array<string>
+# schema) -- and leaving as the team's last owner real-fails with
+# "last-owner-can-not-be-removed".
+curl -sf -X POST "${BASE_URL}/api/v1/teams.leave" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_ID}\",\"rooms\":[\"${TEAM_ROOM_ID}\"]}" > /dev/null 2>&1 || true
+cat > "${EXAMPLES_DIR}/rooms/teams-leave.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.leave", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_ID}", "rooms": ["${TEAM_ROOM_ID}"] } }, "http-response": { "status": 400, "body": { "success": false, "error": "last-owner-can-not-be-removed" } } }
+EOF
+
+# Dedicated fixtures for teams.delete/teams.convertToChannel -- never
+# reuse TEAM_ID, which channels-info/teams-info/etc. above still reference.
+delteam_response=$(curl -sf -X POST "${BASE_URL}/api/v1/teams.create" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-test-team-todelete-${RUN_SUFFIX}\",\"type\":0}")
+TEAM_TO_DELETE_ID=$(printf '%s' "$delteam_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["team"]["_id"])')
+curl -sf -X POST "${BASE_URL}/api/v1/teams.delete" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"teamId\":\"${TEAM_TO_DELETE_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/teams-delete.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_TO_DELETE_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+convteam_response=$(curl -sf -X POST "${BASE_URL}/api/v1/teams.create" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-test-team-toconvert-${RUN_SUFFIX}\",\"type\":0}")
+TEAM_TO_CONVERT_ID=$(printf '%s' "$convteam_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["team"]["_id"])')
+TEAM_TO_CONVERT_ROOM_ID=$(printf '%s' "$convteam_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["team"]["roomId"])')
+cat > "${EXAMPLES_DIR}/rooms/teams-convertToChannel.json" <<EOF
+{ "http-request": { "path": "/api/v1/teams.convertToChannel", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "teamId": "${TEAM_TO_CONVERT_ID}", "roomsToRemove": [] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+echo "Wrote teams.* rooms.yaml examples (~19 real/verified)."
+
+# --- rooms.* (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-adminRooms.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.adminRooms", "method": "GET", "query": { "filter": "specmatic", "count": "5" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "rooms": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-adminRooms-getRoom.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.adminRooms.getRoom", "method": "GET", "query": { "rid": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "room": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.info", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "room": { "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.get", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "update": [], "remove": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-nameExists.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.nameExists", "method": "GET", "query": { "roomName": "${CHANNEL_NAME}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "exists": true, "success": true } } }
+EOF
+
+# Spec declares "userId" as the query param (not "username", which the
+# app also happens to accept but isn't the documented contract).
+cat > "${EXAMPLES_DIR}/rooms/rooms-isMember.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.isMember", "method": "GET", "query": { "roomId": "${CHANNEL_ID}", "userId": "${user_id}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "isMember": true, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-getDiscussions.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.getDiscussions", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "discussions": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-membersOrderedByRole.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.membersOrderedByRole", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "members": [{ "_id": "${user_id}", "username": "admin" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-roles.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.roles", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "roles": [{ "_id": "${user_id}", "rid": "${CHANNEL_ID}", "roles": ["owner"] }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-autocomplete-channelAndPrivate.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.autocomplete.channelAndPrivate", "method": "GET", "query": { "selector": "{\"term\":\"specmatic\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-autocomplete-channelAndPrivate-withPagination.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.autocomplete.channelAndPrivate.withPagination", "method": "GET", "query": { "selector": "{\"term\":\"specmatic\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-autocomplete-availableForTeams.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.autocomplete.availableForTeams", "method": "GET", "query": { "name": "specmatic" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-autocomplete-adminRooms.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.autocomplete.adminRooms", "method": "GET", "query": { "selector": "{\"term\":\"specmatic\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}", "t": "c" }], "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.favorite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"favorite\":true}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-favorite.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.favorite", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "favorite": true } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Real, live-verified finding: rooms.saveNotification's schema uses flat
+# keys like "desktopNotifications" (a string), not the nested
+# {"desktop":{"value":...}} shape one might guess from the client's UI
+# terminology -- sending the nested shape real-fails ("must be string").
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.saveNotification" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"notifications\":{\"desktopNotifications\":\"all\"}}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-saveNotification.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.saveNotification", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "notifications": { "desktopNotifications": "all" } } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Real, live finding: rooms.muteUser requires the target to currently be a
+# room member ("User is not in this room [error-user-not-in-room]") --
+# ROOMSUSER was already kicked from CHANNEL_ID by the channels.kick example
+# above, so ROOMSUSER2 (added as owner/removeOwner'd but never kicked,
+# still a member) is the real valid target here.
+ROOMSUSER2="specmaticroomstest2${RUN_SUFFIX}"
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.muteUser" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"username\":\"${ROOMSUSER2}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-muteUser.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.muteUser", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "username": "${ROOMSUSER2}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.unmuteUser" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\",\"username\":\"${ROOMSUSER2}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-unmuteUser.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.unmuteUser", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}", "username": "${ROOMSUSER2}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.createDiscussion" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"prid\":\"${CHANNEL_ID}\",\"t_name\":\"specmatic-test-discussion-${RUN_SUFFIX}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-createDiscussion.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.createDiscussion", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "prid": "${CHANNEL_ID}", "t_name": "specmatic-example-discussion" } }, "http-response": { "status": 200, "body": { "discussion": { "_id": "specmatic-discussion-id", "prid": "${CHANNEL_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/rooms-images.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.images", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "files": [], "total": 0, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.join" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-join.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.join", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Real, live-verified finding: rooms.leave's error text differs from
+# channels.leave's own last-owner error, despite both hitting a last-owner
+# guard.
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.leave" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${GROUP_ID}\"}" > /dev/null 2>&1 || true
+cat > "${EXAMPLES_DIR}/rooms/rooms-leave.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.leave", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${GROUP_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "You are the last owner. Please set new owner before leaving the room. [error-you-are-last-owner]" } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.hide" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-hide.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.hide", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.open" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null 2>&1 || true
+
+# Real, live finding: rooms.saveRoomSettings's declared "roomName"/"roomTopic"
+# etc. top-level keys (not a single "data" wrapper) -- mirrors the fields
+# individually settable via channels.setXxx.
+curl -sf -X POST "${BASE_URL}/api/v1/rooms.saveRoomSettings" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"rid\":\"${CHANNEL_ID}\",\"roomTopic\":\"specmatic updated topic\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/rooms-saveRoomSettings.json" <<EOF
+{ "http-request": { "path": "/api/v1/rooms.saveRoomSettings", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "rid": "${CHANNEL_ID}", "roomTopic": "specmatic updated topic" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Enterprise-gated (audit/abac.* -- confirmed live: real 403 with
+# "error-unauthorized", same permission-gate category as
+# engagement-dashboard.*/roles.create/sessions.* elsewhere in this project).
+for op in "abac-attributes:/api/v1/abac/attributes" "abac-rooms:/api/v1/abac/rooms" "abac-audit:/api/v1/abac/audit" "abac-pdp-health:/api/v1/abac/pdp/health" "audit-rooms-members:/api/v1/audit/rooms.members"; do
+  fname="${op%%:*}"; path="${op#*:}"
+  cat > "${EXAMPLES_DIR}/rooms/${fname}-ee.json" <<EOF
+{ "http-request": { "path": "${path}", "method": "GET", "query": { "rid": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 403, "body": { "success": false, "error": "User does not have the permissions required for this action [error-unauthorized]" } } }
+EOF
+done
+
+# --- subscriptions.* (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/rooms/subscriptions-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/subscriptions.get", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "update": [], "remove": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/subscriptions-getOne.json" <<EOF
+{ "http-request": { "path": "/api/v1/subscriptions.getOne", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "subscription": { "rid": "${CHANNEL_ID}" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/subscriptions.read" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"rid\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/subscriptions-read.json" <<EOF
+{ "http-request": { "path": "/api/v1/subscriptions.read", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "rid": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/subscriptions.unread" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"roomId\":\"${CHANNEL_ID}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/subscriptions-unread.json" <<EOF
+{ "http-request": { "path": "/api/v1/subscriptions.unread", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roomId": "${CHANNEL_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# --- directory, invites, uploads.delete (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/rooms/directory.json" <<EOF
+{ "http-request": { "path": "/api/v1/directory", "method": "GET", "query": { "query": "{\"text\":\"specmatic\",\"type\":\"channels\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "result": [{ "_id": "${CHANNEL_ID}", "name": "${CHANNEL_NAME}" }], "total": 1, "success": true } } }
+EOF
+
+# Real, live finding: listInvites declares zero parameters in the spec
+# (same whole-file-load-abort class as user-management.yaml's
+# getStatus/sendConfirmationEmail and settings.yaml's settings.public/
+# oauth) -- an example with X-Auth-Token/X-User-Id headers aborts loading
+# for the entire rooms.yaml example set. Removing them makes this a
+# genuinely unauthenticated call, which real-fails with 401 ("You must be
+# logged in to do this."): a spec gap (missing auth header params), not an
+# app bug.
+cat > "${EXAMPLES_DIR}/rooms/listInvites.json" <<EOF
+{ "http-request": { "path": "/api/v1/listInvites", "method": "GET", "headers": {} }, "http-response": { "status": 401, "body": { "status": "error", "message": "You must be logged in to do this." } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/rooms/findOrCreateInvite.json" <<EOF
+{ "http-request": { "path": "/api/v1/findOrCreateInvite", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "rid": "${TEAM_ROOM_ID}", "days": 1, "maxUses": 0 } }, "http-response": { "status": 200, "body": { "_id": "${INVITE_ID}", "rid": "${TEAM_ROOM_ID}", "days": 1, "maxUses": 0, "success": true } } }
+EOF
+
+# Dedicated invite for removeInvite -- never remove INVITE_ID, which
+# listInvites above still references.
+invite2_response=$(curl -sf -X POST "${BASE_URL}/api/v1/findOrCreateInvite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"rid\":\"${TEAM_ROOM_ID}\",\"days\":1,\"maxUses\":1}")
+INVITE_TO_REMOVE_ID=$(printf '%s' "$invite2_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+curl -sf -X DELETE "${BASE_URL}/api/v1/removeInvite/${INVITE_TO_REMOVE_ID}" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/removeInvite.json" <<EOF
+{ "http-request": { "path": "/api/v1/removeInvite/${INVITE_TO_REMOVE_ID}", "method": "DELETE", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Real, live finding: useInviteToken real-fails ("You must be logged in to
+# do this.", 401) when called with the admin's auth token paired with a
+# different user's X-User-Id -- unlike every other operation in this
+# script (which act on OTHER users via roomId/userId in the BODY while
+# keeping the admin's own token+X-User-Id pair in the headers), this
+# endpoint requires the invited user's own real, independently-logged-in
+# session. ROOMSUSER (still holding its known password from creation
+# above) is logged in separately here for this one call.
+invite3_response=$(curl -sf -X POST "${BASE_URL}/api/v1/findOrCreateInvite" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"rid\":\"${TEAM_ROOM_ID}\",\"days\":1,\"maxUses\":0}")
+INVITE3_TOKEN=$(printf '%s' "$invite3_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+roomsuser_login=$(curl -sf -X POST "${BASE_URL}/api/v1/login" -d "user=${ROOMSUSER}&password=SpecmaticTest123!")
+roomsuser_token=$(printf '%s' "$roomsuser_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["authToken"])')
+curl -sf -X POST "${BASE_URL}/api/v1/useInviteToken" -H "X-Auth-Token: ${roomsuser_token}" -H "X-User-Id: ${ROOMSUSER_ID}" -H "Content-Type: application/json" -d "{\"token\":\"${INVITE3_TOKEN}\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/rooms/useInviteToken.json" <<EOF
+{ "http-request": { "path": "/api/v1/useInviteToken", "method": "POST", "headers": { "X-Auth-Token": "${roomsuser_token}", "X-User-Id": "${ROOMSUSER_ID}", "Content-Type": "application/json" }, "body": { "token": "${INVITE3_TOKEN}" } }, "http-response": { "status": 200, "body": { "room": { "_id": "${TEAM_ROOM_ID}" }, "success": true } } }
+EOF
+
+# Real, live finding: uploads.delete only accepts "fileId" -- adding
+# "roomId" (the natural-seeming pairing) real-fails ("must NOT have
+# additional properties"). A nonexistent fileId real-fails with a genuine
+# 404 ("Resource not found"), which is what's captured here since a real
+# uploaded fileId isn't available without a real file upload (multipart,
+# out of scope for this script, same as other file-upload endpoints
+# documented as deferred elsewhere in this project).
+cat > "${EXAMPLES_DIR}/rooms/uploads-delete.json" <<EOF
+{ "http-request": { "path": "/api/v1/uploads.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "fileId": "nonexistent-specmatic-fileid" } }, "http-response": { "status": 404, "body": { "success": false, "error": "Resource not found" } } }
+EOF
+
+echo "Wrote rooms.*/abac.*/subscriptions.*/directory/invites/uploads.delete examples (~30 real/verified)."

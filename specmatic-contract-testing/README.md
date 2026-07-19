@@ -1014,18 +1014,127 @@ from `marketplace-apps.yaml`, same external-config reasons).
 
 ---
 
+### 2026-07-19 — Real committed examples added for `rooms.yaml` (148 paths)
+
+Extended `regenerate-auth-examples.sh` with real, live-verified examples
+across `channels.*`, `groups.*` (mirroring `channels.*`'s verified shapes —
+same underlying room-service code, differing only by room type `c`/`p`,
+confirmed identical across ~16 spot-checked pairs), `teams.*`, `rooms.*`,
+`abac.*`/`audit.*`, `subscriptions.*`, `directory`, invites, and
+`uploads.delete` — 134 example files, run against the live app via a scoped
+`docker run ... test rooms.yaml --lenient`.
+
+**Per-operation findings (each independently live-verified, several caught
+and corrected mid-session after an initial wrong assumption):**
+
+- **`teams.update`'s `data.name`/`data.type` aren't marked `required` in the
+  spec's `data` sub-schema, but the app rejects a request missing either**
+  (`must have required property 'name' ... 'type'`) — same class of gap as
+  the already-documented `roles.addUserToRole` defect.
+- **`teams.leave`'s `rooms` array must be non-empty** (`must NOT have fewer
+  than 1 items`), stricter than the spec's plain `array<string>` schema;
+  leaving as the team's last owner then real-fails with
+  `last-owner-can-not-be-removed`.
+- **`channels.leave` only recognizes `"c"`-type rooms** — passing a private
+  group's `roomId` real-fails with `error-room-not-found`, not the
+  last-owner error one might expect.
+- **`channels.leave`/`groups.leave`/`rooms.leave` share the same last-owner
+  guard and error text** (`error-you-are-last-owner`), but `rooms.leave`'s
+  wording differs subtly from what a first guess would produce — verified
+  by direct live call rather than assumed from the other two.
+- **`rooms.saveNotification`'s schema uses flat keys** (e.g.
+  `desktopNotifications`), not the nested `{"desktop":{"value":...}}` shape
+  the client UI's terminology might suggest — the nested shape real-fails
+  (`must be string`).
+- **`uploads.delete` only accepts `fileId`** — adding the natural-seeming
+  `roomId` real-fails (`must NOT have additional properties`).
+- **`rooms.muteUser`/`unmuteUser` require the target to currently be a room
+  member** (`error-user-not-in-room`) — caught because the script's own
+  disposable `ROOMSUSER` had already been kicked from the channel by an
+  earlier example in the same run; fixed by using a second disposable user
+  that stays a member throughout.
+- **`useInviteToken` requires the invited user's own real, independently
+  logged-in session** — unlike every other operation here (which act on
+  other users via `roomId`/`userId` in the body while keeping the admin's
+  own `X-Auth-Token`/`X-User-Id`), pairing the admin's token with a
+  different user's `X-User-Id` real-fails (`You must be logged in to do
+  this.`, 401).
+- **`channels.addOwner`/`removeOwner`, `setReadOnly`/`setDefault`, and
+  `open`/`close` all have real, live state-dependent behavior** the spec's
+  plain schemas don't capture: calling them with a value/state the room is
+  already in real-fails (`error-user-already-owner`,
+  `error-remove-last-owner`, "same as what it would be changed to",
+  "already open/closed to the sender"). Fixed by targeting a second
+  disposable user for owner add/remove, and by toggling to the
+  opposite-of-default value for the boolean setters.
+- **`groups.setEncrypted` real-fails on this instance** because
+  `E2E_Enable` is `false` instance-wide (`Only groups or direct channels
+  can enable encryption [error-action-not-allowed]`) — an
+  environment/config finding, not an app bug or Enterprise gate.
+- **Whole-file-load-abort, the same bug class documented for
+  `user-management.yaml`/`settings.yaml`, found three more times here**:
+  `listInvites`, `channels.kick`, and `channels.roles` all declare zero (or
+  incomplete) `Auth-Token`/`UserId` parameters in the spec — despite
+  `groups.kick`/`groups.roles` (the otherwise-identical mirror operations)
+  declaring them correctly. An example with those headers aborted loading
+  for the *entire* 148-path spec down to a single synthetic failure; fixed
+  by dropping the headers to match the spec exactly, which makes each a
+  genuinely unauthenticated call, real-failing with 401.
+- **`rooms.isMember`'s declared query param is `userId`, not `username`**
+  (which the app also happens to accept, but isn't the documented
+  contract).
+- Enterprise/permission-gated (real 403,
+  `error-unauthorized`): `abac.*`, `audit/rooms.members` — same permission
+  gate category as `engagement-dashboard.*`/`sessions.*` elsewhere in this
+  project, though the message differs slightly (`error-unauthorized` vs
+  `error-action-not-allowed`).
+
+**Systemic finding, not itemized per-endpoint (dominant failure category
+in the full spec run, ~3,100 of ~3,700 rule violations):** the spec's
+response schemas for the shared `channel`/`group`/`room`/`team` object
+shapes are broadly incomplete relative to what RocketChat's real API
+actually returns. Endpoints like `channels.info`, `channels.list`,
+`rooms.adminRooms`, `rooms.get`, and their `groups.*`/`teams.*`
+counterparts each declare a different, narrower subset of fields than the
+live app populates (`announcement`, `announcementDetails`, `description`,
+`prid`, `u.name`, `ts`, `joinCodeRequired`, `teamId`, `teamMain`, deeply
+nested `lastMessage.md[].value[]` markdown structures, etc.) — the same
+undocumented-additional-fields category already logged for
+`integrations.get`/`oauth-apps.get` elsewhere in this project, just far
+more frequent here because `rooms.yaml` has ~40 endpoints returning these
+shared shapes. Not fixed by stripping real data from the test fixtures —
+that would hide a genuine, real spec-completeness gap rather than surface
+it, which is the opposite of what this whole exercise is for. Separately,
+~550 of the remaining violations are the spec's *own* inline examples
+(named `"Example"`, `"Success"`, `"Match error"`, `"PDP Healthy"`, etc.,
+never one of this project's own real-data files) carrying fake/placeholder
+auth tokens that naturally 401 against any real live server — the same
+accepted category already documented for `messaging.yaml`.
+
+Genuinely out of scope, deferred: `rooms.export`/`rooms.cleanHistory`
+(destructive/bulk-export operations against real message history, no safe
+disposable target), `rooms.media`/`rooms.mediaConfirm` (real multipart
+file upload, same category as other file-upload endpoints deferred
+elsewhere), the 3 remaining `abac.*` CRUD operations beyond the one
+representative Enterprise-gated example (out of scope at this project's
+depth), `rooms.images`/`channels.files`/`groups.files` beyond the
+empty-list case (same file-upload dependency).
+
+---
+
 ## Summary: all 12 spec files processed
 
 Every one of Rocket.Chat's 12 OpenAPI spec files has now had at least one
-real, live-verified pass — 4 files (`authentication`, `content-management`,
-`notifications`, `messaging`) at full per-operation depth, 8 files
-(`rooms`, `omnichannel`, `user-management`, `settings`, `integrations`,
-`marketplace-apps`, `statistics`, `miscellaneous`) spot-checked with real
-requests given the time budget, explicitly documenting what wasn't
-covered rather than implying full coverage. Zero spec edits anywhere.
-Zero forks. Every finding traced to actual evidence (a real request/
-response, a real log line, or a real source file) — never asserted on
-assumption.
+real, live-verified pass — 10 files (`authentication`, `content-management`,
+`notifications`, `messaging`, `rooms`, `user-management`, `settings`,
+`integrations`, `marketplace-apps`, `miscellaneous`) with real, committed
+per-operation examples, `statistics` at real-example depth for its 2
+reachable operations (the rest genuinely Enterprise-gated), and
+`omnichannel` still spot-checked given the time budget, explicitly
+documenting what wasn't covered rather than implying full coverage. Zero
+spec edits anywhere. Zero forks. Every finding traced to actual evidence (a
+real request/response, a real log line, or a real source file) — never
+asserted on assumption.
 
 **Real app bugs found (candidates for an app fix, not spec drift):**
 1. `GET /api/v1/instances.get` — undocumented `400`, raw internal
