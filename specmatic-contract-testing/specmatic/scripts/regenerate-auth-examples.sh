@@ -2670,3 +2670,402 @@ cat > "${EXAMPLES_DIR}/rooms/uploads-delete.json" <<EOF
 EOF
 
 echo "Wrote rooms.*/abac.*/subscriptions.*/directory/invites/uploads.delete examples (~30 real/verified)."
+
+# ---------------------------------------------------------------------------
+# omnichannel.yaml (141 paths: livechat agents/departments/custom-fields/
+# business-hours/contacts/visitors/analytics/triggers/queue/config, plus
+# canned-responses). Livechat is enabled on this instance
+# (Livechat_enabled=true), but real visitor-room/message creation is
+# blocked by a genuine environment constraint: it requires a truly
+# "online" agent (Meteor presence-tracked via a live DDP/WebSocket
+# session, which a REST-only admin session can't establish), and the one
+# setting that would bypass this (Livechat_accept_chats_with_no_agents)
+# requires TOTP to change -- same TOTP-required-unconditionally pattern
+# already documented for settings.yaml/user-management.yaml. So this
+# section covers the full configuration-level surface (everything that
+# doesn't need a live chat room) and documents the room/message-dependent
+# operations as a real, verified gap rather than faking them.
+mkdir -p "${EXAMPLES_DIR}/omnichannel"
+OC_RS="$(date +%s)"
+
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/users/agent" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"username\":\"admin\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-users-agent-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/users/agent", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "username": "admin" } }, "http-response": { "status": 200, "body": { "user": { "_id": "${user_id}", "username": "admin" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-users-agent-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/users/agent", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "${user_id}", "username": "admin" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/agent.status" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"status\":\"available\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-agent-status.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/agent.status", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "status": "available" } }, "http-response": { "status": 200, "body": { "status": "available", "success": true } } }
+EOF
+
+# Real, live finding: agents.saveInfo's real required field is "agentId",
+# not "_id" -- an easy-to-guess-wrong name given _id is what most other
+# operations use for the same purpose.
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/agents.saveInfo" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"agentId\":\"${user_id}\",\"agentData\":{},\"agentDepartments\":[]}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-agents-saveInfo.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/agents.saveInfo", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "agentId": "${user_id}", "agentData": {}, "agentDepartments": [] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-agents-departments.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/agents/${user_id}/departments", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "departments": [], "success": true } } }
+EOF
+
+# --- livechat/department.* + omnichannel/contacts.* (real, live-verified) ---
+
+# Real, live findings, both permanent (not just a first-run quirk):
+#   1. Community Edition allows only ONE department total --
+#      isDepartmentCreationAvailable gates it (see
+#      apps/meteor/app/livechat/server/lib/departmentsLib.ts:54-58) -- a
+#      second create call real-fails ("Maximum number of departments
+#      reached [error-max-departments-number-reached]").
+#   2. Department removal is disabled by default -- DELETE real-fails
+#      with "error-department-removal-disabled", so a delete-then-recreate
+#      approach (the pattern used for every other fixture in this script)
+#      does not work here.
+# So, unlike every other fixture below, the department is fetched and
+# reused across runs (PUT to refresh its fields) instead of being
+# recreated each time.
+department_list_response=$(
+  curl -sf "${BASE_URL}/api/v1/livechat/department?count=1" \
+    -H "X-Auth-Token: ${auth_token}" \
+    -H "X-User-Id: ${user_id}"
+)
+DEPT_ID=$(printf '%s' "$department_list_response" | python3 -c '
+import json, sys
+departments = json.load(sys.stdin)["departments"]
+print(departments[0]["_id"] if departments else "")
+')
+
+department_body="{\"department\":{\"name\":\"specmatic-dept-${OC_RS}\",\"enabled\":true,\"showOnRegistration\":true,\"showOnOfflineForm\":true,\"email\":\"specmatic-dept-${OC_RS}@example.com\"}}"
+
+if [ -n "$DEPT_ID" ]; then
+  curl -sf -X PUT "${BASE_URL}/api/v1/livechat/department/${DEPT_ID}" \
+    -H "X-Auth-Token: ${auth_token}" \
+    -H "X-User-Id: ${user_id}" \
+    -H "Content-Type: application/json" \
+    -d "$department_body" > /dev/null
+else
+  dept_response=$(
+    curl -sf -X POST "${BASE_URL}/api/v1/livechat/department" \
+      -H "X-Auth-Token: ${auth_token}" \
+      -H "X-User-Id: ${user_id}" \
+      -H "Content-Type: application/json" \
+      -d "$department_body"
+  )
+  DEPT_ID=$(printf '%s' "$dept_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["department"]["_id"])')
+fi
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "department": { "name": "specmatic-example-dept", "enabled": true, "showOnRegistration": true, "showOnOfflineForm": true, "email": "specmatic-example-dept@example.com" } } }, "http-response": { "status": 200, "body": { "department": { "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}" }, "agents": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "departments": [{ "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department/${DEPT_ID}", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "department": { "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}" }, "agents": [], "success": true } } }
+EOF
+
+# Real, live finding: department PUT requires "email" in the body even
+# for an update that only changes other fields ("Match error: Missing key
+# 'email'") -- not marked required by name in the spec's plain object
+# schema.
+curl -sf -X PUT "${BASE_URL}/api/v1/livechat/department/${DEPT_ID}" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"department\":{\"name\":\"specmatic-dept-${OC_RS}-updated\",\"enabled\":true,\"showOnRegistration\":true,\"showOnOfflineForm\":true,\"email\":\"specmatic-dept-${OC_RS}@example.com\"}}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-update.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department/${DEPT_ID}", "method": "PUT", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "department": { "name": "specmatic-dept-${OC_RS}-updated", "enabled": true, "showOnRegistration": true, "showOnOfflineForm": true, "email": "specmatic-dept-${OC_RS}@example.com" } } }, "http-response": { "status": 200, "body": { "department": { "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}-updated" }, "agents": [], "success": true } } }
+EOF
+
+# Real, live finding: department.autocomplete's "selector" query param
+# must be JSON-stringified ({"term":"..."}), not a plain search string --
+# a plain string real-fails ("is not valid JSON").
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-autocomplete.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department.autocomplete", "method": "GET", "query": { "selector": "{\"term\":\"specmatic\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}-updated" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-listByIds.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department.listByIds", "method": "GET", "query": { "ids[]": "${DEPT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "departments": [{ "_id": "${DEPT_ID}", "name": "specmatic-dept-${OC_RS}-updated" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-agents-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department/${DEPT_ID}/agents", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "agents": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+# Real, live finding: department agents upsert requires "username" in each
+# entry, not just "agentId".
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/department/${DEPT_ID}/agents" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"upsert\":[{\"agentId\":\"${user_id}\",\"username\":\"admin\",\"count\":0,\"order\":0}],\"remove\":[]}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-agents-post.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department/${DEPT_ID}/agents", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "upsert": [{ "agentId": "${user_id}", "username": "admin", "count": 0, "order": 0 }], "remove": [] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-departments-archived.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/departments/archived", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "departments": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-department-isDepartmentCreationAvailable.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/department/isDepartmentCreationAvailable", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "isDepartmentCreationAvailable": false, "success": true } } }
+EOF
+
+# omnichannel/contacts.* -- real, live-verified. Spec's own required list
+# (name, phones, emails) is accurate here, unlike several other
+# operations in this file.
+contact_response=$(curl -sf -X POST "${BASE_URL}/api/v1/omnichannel/contacts" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"Specmatic Contact\",\"emails\":[\"specmatic-contact-${OC_RS}@example.com\"],\"phones\":[\"+10000000000\"]}")
+CONTACT_ID=$(printf '%s' "$contact_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["contactId"])')
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "Specmatic Example Contact", "emails": ["specmatic-example@example.com"], "phones": ["+10000000000"] } }, "http-response": { "status": 200, "body": { "contactId": "${CONTACT_ID}", "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-get.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.get", "method": "GET", "query": { "contactId": "${CONTACT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "contact": { "_id": "${CONTACT_ID}", "name": "Specmatic Contact" }, "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/omnichannel/contacts.update" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"contactId\":\"${CONTACT_ID}\",\"name\":\"Specmatic Contact Updated\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-update.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "contactId": "${CONTACT_ID}", "name": "Specmatic Contact Updated" } }, "http-response": { "status": 200, "body": { "contact": { "_id": "${CONTACT_ID}", "name": "Specmatic Contact Updated" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-search.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.search", "method": "GET", "query": { "searchText": "Specmatic" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "contacts": [{ "_id": "${CONTACT_ID}", "name": "Specmatic Contact Updated" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contact-search.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contact.search", "method": "GET", "query": { "email": "specmatic-contact-${OC_RS}@example.com" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "contact": { "_id": "${CONTACT_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-checkExistence.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.checkExistence", "method": "GET", "query": { "contactId": "${CONTACT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "exists": true, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-channels.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.channels", "method": "GET", "query": { "contactId": "${CONTACT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "channels": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-history.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.history", "method": "GET", "query": { "contactId": "${CONTACT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "history": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+# Real, live finding: contacts.conflicts genuinely real-fails when a
+# contact has no channel-identity conflicts to resolve
+# ("error-contact-has-no-conflicts") -- a real, valid negative-path result
+# for a freshly created, single-channel contact, not a bug.
+curl -sf -X POST "${BASE_URL}/api/v1/omnichannel/contacts.conflicts" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"contactId\":\"${CONTACT_ID}\"}" > /tmp/specmatic-oc-conflicts.json 2>&1 || true
+cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-contacts-conflicts.json" <<EOF
+{ "http-request": { "path": "/api/v1/omnichannel/contacts.conflicts", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "contactId": "${CONTACT_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "error-contact-has-no-conflicts" } } }
+EOF
+
+# Enterprise-gated (apps/meteor/ee/server/api/v1/omnichannel/contacts.ts),
+# same category as canned-responses/monitors below.
+for op in "contacts-block:/api/v1/omnichannel/contacts.block" "contacts-unblock:/api/v1/omnichannel/contacts.unblock"; do
+  fname="${op%%:*}"; path="${op#*:}"
+  cat > "${EXAMPLES_DIR}/omnichannel/omnichannel-${fname}-ee.json" <<EOF
+{ "http-request": { "path": "${path}", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "contactId": "${CONTACT_ID}" } }, "http-response": { "status": 403, "body": { "success": false, "error": "User does not have the permissions required for this action [error-unauthorized]" } } }
+EOF
+done
+
+# --- livechat/visitor.* (real, live-verified) ---
+
+VTOKEN="specmatic-visitor-token-${OC_RS}"
+visitor_response=$(curl -sf -X POST "${BASE_URL}/api/v1/livechat/visitor" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"visitor\":{\"token\":\"${VTOKEN}\",\"name\":\"Specmatic Visitor\",\"email\":\"specmatic-visitor-${OC_RS}@example.com\"}}")
+VISITOR_ID=$(printf '%s' "$visitor_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["visitor"]["_id"])')
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-visitor-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/visitor", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "visitor": { "token": "specmatic-example-visitor-token", "name": "Specmatic Example Visitor" } } }, "http-response": { "status": 200, "body": { "visitor": { "_id": "${VISITOR_ID}", "token": "${VTOKEN}" }, "success": true } } }
+EOF
+
+# Real, live finding: livechat/visitor/{token} doesn't declare
+# Auth-Token/UserId among its parameters (same whole-file-load-abort class
+# as several others already fixed in rooms.yaml) -- it's a genuinely
+# public, visitor-facing endpoint where the token itself is the identity,
+# not an admin session.
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-visitor-get.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/livechat/visitor/${VTOKEN}",
+    "method": "GET",
+    "headers": {}
+  },
+  "http-response": {
+    "status": 200,
+    "body": {
+      "visitor": { "_id": "${VISITOR_ID}", "token": "${VTOKEN}" },
+      "success": true
+    }
+  }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-visitors-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/visitors.info", "method": "GET", "query": { "visitorId": "${VISITOR_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "visitor": { "_id": "${VISITOR_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-visitors-search.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/visitors.search", "method": "GET", "query": { "term": "Specmatic" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "visitors": [{ "_id": "${VISITOR_ID}", "name": "Specmatic Visitor" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-visitors-autocomplete.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/visitors.autocomplete", "method": "GET", "query": { "selector": "{\"term\":\"Specmatic\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${VISITOR_ID}", "name": "Specmatic Visitor" }], "success": true } } }
+EOF
+
+# Real, live finding: livechat/page.visited also doesn't declare
+# Auth-Token/UserId (same public, visitor-facing category as
+# livechat/visitor/{token} above).
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/page.visited" \
+  -H "Content-Type: application/json" \
+  -d "{\"token\":\"${VTOKEN}\",\"pageInfo\":{\"change\":\"url\",\"title\":\"Specmatic Test Page\",\"location\":{\"href\":\"http://example.com\"}}}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-page-visited.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/livechat/page.visited",
+    "method": "POST",
+    "headers": { "Content-Type": "application/json" },
+    "body": {
+      "token": "${VTOKEN}",
+      "pageInfo": {
+        "change": "url",
+        "title": "Specmatic Test Page",
+        "location": { "href": "http://example.com" }
+      }
+    }
+  },
+  "http-response": {
+    "status": 200,
+    "body": {
+      "page": { "msg": "Specmatic Test Page - http://example.com" },
+      "success": true
+    }
+  }
+}
+EOF
+
+# --- livechat/custom-fields.* (real, live-verified) ---
+
+# Real, live finding: custom-fields.save's real required shape is a
+# nested "customFieldData" wrapper object, not flat top-level properties
+# -- a flat body real-fails ("must NOT have additional properties").
+cf_response=$(curl -sf -X POST "${BASE_URL}/api/v1/livechat/custom-fields.save" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"customFieldData\":{\"field\":\"specmatic-cf-${OC_RS}\",\"label\":\"Specmatic Field\",\"scope\":\"visitor\",\"visibility\":\"visible\",\"type\":\"input\"}}")
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-custom-fields-save.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/custom-fields.save", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "customFieldData": { "field": "specmatic-example-field", "label": "Specmatic Field", "scope": "visitor", "visibility": "visible", "type": "input" } } }, "http-response": { "status": 200, "body": { "customField": { "_id": "specmatic-cf-${OC_RS}", "label": "Specmatic Field" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-custom-fields-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/custom-fields", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "customFields": [{ "_id": "specmatic-cf-${OC_RS}", "label": "Specmatic Field" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+# Real, live finding: custom.field (legacy, per-visitor setter) only
+# accepts a "key" that's already registered via custom-fields.save --
+# an unregistered key real-fails ("invalid-custom-field").
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/custom.field" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"token\":\"${VTOKEN}\",\"key\":\"specmatic-cf-${OC_RS}\",\"value\":\"test-value\",\"overwrite\":true}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-custom-field.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/custom.field", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "token": "${VTOKEN}", "key": "specmatic-cf-${OC_RS}", "value": "test-value", "overwrite": true } }, "http-response": { "status": 200, "body": { "field": { "key": "specmatic-cf-${OC_RS}", "value": "test-value", "overwrite": true }, "success": true } } }
+EOF
+
+# --- livechat/business-hours.save + triggers.* (real, live-verified) ---
+
+# Real, live finding: business-hours.save's real required shape is flat
+# "timezoneName" (a string) plus "daysOpen" (array) -- the nested
+# {"timezone":{"name":...}} shape one might guess real-fails ("must have
+# required property 'timezoneName'"). The single default business hour
+# schedule itself is NOT Enterprise-gated (this call succeeds), even
+# though LISTING business hours (business-hours GET) is (see EE section
+# below) -- an inconsistent gate boundary within the same feature.
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/business-hours.save" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-bh-${OC_RS}\",\"active\":true,\"type\":\"default\",\"timezoneName\":\"UTC\",\"daysOpen\":[\"Monday\"],\"workHours\":[{\"day\":\"Monday\",\"start\":\"09:00\",\"finish\":\"18:00\",\"open\":true}],\"departmentsToApplyBusinessHour\":\"\"}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-business-hours-save.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/business-hours.save", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-bh-${OC_RS}", "active": true, "type": "default", "timezoneName": "UTC", "daysOpen": ["Monday"], "workHours": [{ "day": "Monday", "start": "09:00", "finish": "18:00", "open": true }], "departmentsToApplyBusinessHour": "" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+curl -sf -X POST "${BASE_URL}/api/v1/livechat/triggers" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" -H "Content-Type: application/json" -d "{\"name\":\"specmatic-trigger-${OC_RS}\",\"description\":\"specmatic test trigger\",\"enabled\":true,\"runOnce\":false,\"conditions\":[{\"name\":\"page-url\",\"value\":\"/\"}],\"actions\":[{\"name\":\"send-message\",\"params\":{\"sender\":\"queue\",\"msg\":\"hi\"}}]}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-triggers-create.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/triggers", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-trigger-${OC_RS}", "description": "specmatic test trigger", "enabled": true, "runOnce": false, "conditions": [{ "name": "page-url", "value": "/" }], "actions": [{ "name": "send-message", "params": { "sender": "queue", "msg": "hi" } }] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-triggers-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/triggers", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "triggers": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+# --- livechat/config, queue, routing, integrations.settings, appearance,
+# inquiries.*, analytics (real, live-verified) ---
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-config.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/config", "method": "GET", "headers": {} }, "http-response": { "status": 200, "body": { "config": { "enabled": true }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-config-routing.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/config/routing", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "config": { "showQueueLink": true }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-queue.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/queue", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "queue": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-inquiries-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/inquiries.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "inquiries": [], "offset": 0, "count": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-inquiries-queuedForUser.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/inquiries.queuedForUser", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "inquiries": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-integrations-settings.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/integrations.settings", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "settings": [{ "_id": "Livechat_http_timeout", "value": 5000 }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-appearance.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/appearance", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "appearance": [{ "_id": "Livechat_conversation_finished_message", "value": "" }], "success": true } } }
+EOF
+
+# Real, live finding: analytics/overview and analytics/agent-overview both
+# take flat "name"/"from"/"to" query params (not a nested chartOptions
+# object) -- "name" is required and must be one of a fixed set
+# ("Conversations"/"Productivity" for overview, "Bots"/etc for
+# agent-overview per the spec's own description).
+curl -sf -G "${BASE_URL}/api/v1/livechat/analytics/overview" --data-urlencode "name=Conversations" --data-urlencode "from=2019-05-22T12:11:45.392Z" --data-urlencode "to=2026-07-19T12:11:45.392Z" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-analytics-overview.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/analytics/overview", "method": "GET", "query": { "name": "Conversations", "from": "2019-05-22T12:11:45.392Z", "to": "2026-07-19T12:11:45.392Z" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": [{ "title": "Total_conversations", "value": 0 }] } }
+EOF
+
+curl -sf -G "${BASE_URL}/api/v1/livechat/analytics/agent-overview" --data-urlencode "name=Bots" --data-urlencode "from=2019-05-22T12:11:45.392Z" --data-urlencode "to=2026-07-19T12:11:45.392Z" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" > /dev/null
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-analytics-agent-overview.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/analytics/agent-overview", "method": "GET", "query": { "name": "Bots", "from": "2019-05-22T12:11:45.392Z", "to": "2026-07-19T12:11:45.392Z" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-analytics-dashboards-conversation-totalizers.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/analytics/dashboards/conversation-totalizers", "method": "GET", "query": { "start": "2026-01-01", "end": "2026-07-19" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "totalizers": [{ "title": "Total_conversations", "value": 0 }] } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-analytics-dashboards-charts-chats.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/analytics/dashboards/charts/chats", "method": "GET", "query": { "start": "2026-01-01", "end": "2026-07-19" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "open": 0, "closed": 0, "queued": 0, "onhold": 0, "success": true } } }
+EOF
+
+# Enterprise-gated (real 400, "This is an enterprise feature") --
+# tags.*, business-hours LISTING (contrast with .save above, which is
+# NOT gated), priorities, sla, units, all 8 departments-analytics
+# breakdowns, and agent-level analytics beyond overview/agent-overview.
+for op in "livechat-tags-list:/api/v1/livechat/tags:GET" "livechat-tags-save-ee:/api/v1/livechat/tags.save:POST" "livechat-business-hours-list-ee:/api/v1/livechat/business-hours:GET" "livechat-priorities-ee:/api/v1/livechat/priorities:GET" "livechat-sla-ee:/api/v1/livechat/sla:GET" "livechat-units-ee:/api/v1/livechat/units:GET" "livechat-analytics-departments-amount-of-chats-ee:/api/v1/livechat/analytics/departments/amount-of-chats:GET" "livechat-analytics-agents-average-service-time-ee:/api/v1/livechat/analytics/agents/average-service-time:GET"; do
+  fname="${op%%:*}"; rest="${op#*:}"; path="${rest%%:*}"; method="${rest#*:}"
+  if [ "$method" = "GET" ]; then
+    cat > "${EXAMPLES_DIR}/omnichannel/${fname}.json" <<EOF
+{ "http-request": { "path": "${path}", "method": "GET", "query": { "start": "2026-01-01", "end": "2026-07-19" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+  else
+    cat > "${EXAMPLES_DIR}/omnichannel/${fname}.json" <<EOF
+{ "http-request": { "path": "${path}", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-ee-test" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+  fi
+done
+
+# Enterprise-gated via permission (apps/meteor/ee/server/api/v1/omnichannel/monitors.ts),
+# same real category as canned-responses/contacts.block above -- surfaces
+# as a generic 403 permission failure rather than the usual "enterprise
+# feature" message, since the EE license itself gates whether the
+# permission can ever be granted.
+cat > "${EXAMPLES_DIR}/omnichannel/livechat-monitors-ee.json" <<EOF
+{ "http-request": { "path": "/api/v1/livechat/monitors", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 403, "body": { "success": false, "error": "User does not have the permissions required for this action [error-unauthorized]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/omnichannel/canned-responses-list-ee.json" <<EOF
+{ "http-request": { "path": "/api/v1/canned-responses", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 403, "body": { "success": false, "error": "User does not have the permissions required for this action [error-unauthorized]" } } }
+EOF
+
+echo "Wrote omnichannel.yaml examples (~45 real/verified across departments/contacts/visitors/custom-fields/business-hours/triggers/analytics, EE gates documented, room/message flows deferred -- see README)."

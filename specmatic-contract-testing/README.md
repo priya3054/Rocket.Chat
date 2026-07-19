@@ -1122,19 +1122,129 @@ empty-list case (same file-upload dependency).
 
 ---
 
+### 2026-07-19 — Real committed examples added for `omnichannel.yaml` (141 paths, last of the 12 spec files)
+
+Livechat is enabled on this instance (`Livechat_enabled=true`), but real
+visitor-room/message creation turned out to be blocked by a genuine
+environment constraint, discovered by trying it directly: `livechat/room`
+real-fails with `no-agent-online` even after registering the admin as a
+livechat agent and setting their status to `available`, because
+RocketChat's real "online" presence is tracked through a live DDP/
+WebSocket session, which a REST-only admin session can't establish. The
+one setting that would bypass this
+(`Livechat_accept_chats_with_no_agents`) requires TOTP to change — the
+same TOTP-required-unconditionally pattern already documented for
+`settings.yaml`/`user-management.yaml`. So this pass covers the full
+configuration-level surface (everything not gated behind an actual live
+chat room) — ~45 real, live-verified examples across
+`livechat/users.*`, `livechat/department.*`,
+`omnichannel/contacts.*`, `livechat/visitor.*`, `livechat/custom-fields.*`,
+`livechat/business-hours.save`, `livechat/triggers.*`, and several
+`livechat/analytics/*` endpoints — and documents the room/message-
+dependent operations as a real, verified gap rather than faking them.
+
+**Per-operation findings:**
+
+- **Community Edition allows only one department, ever.**
+  `isDepartmentCreationAvailable` gates department creation
+  (`apps/meteor/app/livechat/server/lib/departmentsLib.ts:54-58`) — a
+  second `livechat/department` create call real-fails ("Maximum number of
+  departments reached `[error-max-departments-number-reached]`"). Worse,
+  **department removal is disabled by default** — `DELETE
+  livechat/department/{_id}` real-fails with
+  `error-department-removal-disabled`, so the usual
+  delete-then-recreate-fresh-fixture approach used everywhere else in this
+  script doesn't work here. Fixed by having the script fetch-or-create:
+  reuse the existing department (`PUT` to refresh its fields) if one
+  exists, only `POST`-create if none does yet.
+- **`livechat/agents.saveInfo`'s real required field is `agentId`, not
+  `_id`** — an easy mistake given `_id` is what most other operations use
+  for the same purpose.
+- **`livechat/department/{_id}` (`PUT`) requires `email` in the body**
+  even for an update that only touches other fields (`Match error: Missing
+  key 'email'`).
+- **`livechat/department.autocomplete`'s `selector` query param must be
+  JSON-stringified** (`{"term":"..."}`), not a plain search string — a
+  plain string real-fails ("is not valid JSON").
+- **`livechat/department/{_id}/agents` (`POST`) requires `username` in
+  each upsert entry**, not just `agentId`.
+- **`livechat/custom-fields.save`'s real required shape is a nested
+  `customFieldData` wrapper object**, not flat top-level properties — a
+  flat body real-fails (`must NOT have additional properties`).
+- **`livechat/custom.field` (the legacy per-visitor field setter) only
+  accepts a `key` that's already been registered via
+  `custom-fields.save`** — an unregistered key real-fails
+  (`invalid-custom-field`).
+- **`livechat/business-hours.save`'s real required shape is flat
+  `timezoneName` (string) + `daysOpen` (array)**, not a nested
+  `{"timezone":{"name":...}}` shape. Also a real, inconsistent gate
+  boundary within the same feature: saving the single default business
+  hour schedule is **not** Enterprise-gated, but *listing* business hours
+  (`livechat/business-hours` `GET`) is.
+- **`livechat/analytics/overview` and `analytics/agent-overview` take
+  flat `name`/`from`/`to` query params**, not a nested `chartOptions`
+  object — `name` is required and must be one of a fixed set of values
+  the spec's own description names.
+- **`omnichannel/contacts.conflicts` genuinely real-fails when a contact
+  has no channel-identity conflicts to resolve**
+  (`error-contact-has-no-conflicts`) — a real, valid negative-path result
+  for a freshly created, single-channel contact, not a bug.
+- **Whole-file-load-abort, the same bug class documented for
+  `rooms.yaml`/`user-management.yaml`/`settings.yaml`**: `livechat/visitor/
+  {token}` (`GET`) and `livechat/page.visited` both real-fail to load with
+  `X-Auth-Token`/`X-User-Id` headers, since neither declares them as
+  parameters — both are genuinely public, visitor-facing endpoints where
+  the visitor's own `token` is the identity, not an admin session. Fixed
+  by dropping the headers, which is also what the live app expects (both
+  real-succeed unauthenticated).
+- **Enterprise-gated** (real `400`, `"This is an enterprise feature"`):
+  `tags.*`, `business-hours` listing, `priorities`, `sla`, `units`, all 8
+  `analytics/departments/*` breakdowns, agent-level analytics beyond
+  overview (`analytics/agents/average-service-time` etc.).
+- **Enterprise-gated via permission** (real `403`,
+  `error-unauthorized` — confirmed by finding the route registration
+  under `apps/meteor/ee/`, same as `contacts.block`/`unblock` below):
+  `canned-responses`, `livechat/monitors`. The EE license itself gates
+  whether the permission can ever be granted, so this surfaces as a
+  generic permission failure rather than the usual "enterprise feature"
+  message.
+- `omnichannel/contacts.block`/`unblock` are also Enterprise
+  (`apps/meteor/ee/server/api/v1/omnichannel/contacts.ts`).
+
+**Systemic finding, same category as `rooms.yaml`, not itemized
+per-endpoint:** `livechat/config` and `livechat/visitor/{token}` both
+return real, rich data (`host`, `ip`, `triggers`, `resources`,
+`dataProcessingConsentText`, etc.) that the spec's response schema for
+those endpoints doesn't declare — the same undocumented-additional-fields
+gap already logged for `rooms.yaml`'s shared object shapes.
+
+Genuinely out of scope, deferred (all downstream of the no-online-agent
+constraint above): `livechat/room`/`room.close`/`room.forward`/
+`room.onHold`/`room.survey`/`room.saveInfo`, `livechat/message*`,
+`livechat/transcript*`, `livechat/upload`, `visitor.department.transfer`,
+`visitors.chatHistory`/`searchChats`/`pagesVisited` (all need a real
+room). Also deferred: `livechat/sms-incoming/{service}` (needs a real SMS
+provider webhook payload), `livechat/triggers/external-service/test`
+(needs a real external endpoint), `omnichannel/integrations`/
+`livechat/webhook.test` (spec's own inline examples only, no safe way to
+verify without a real external webhook target).
+
+---
+
 ## Summary: all 12 spec files processed
 
 Every one of Rocket.Chat's 12 OpenAPI spec files has now had at least one
-real, live-verified pass — 10 files (`authentication`, `content-management`,
+real, live-verified pass — 11 files (`authentication`, `content-management`,
 `notifications`, `messaging`, `rooms`, `user-management`, `settings`,
-`integrations`, `marketplace-apps`, `miscellaneous`) with real, committed
-per-operation examples, `statistics` at real-example depth for its 2
-reachable operations (the rest genuinely Enterprise-gated), and
-`omnichannel` still spot-checked given the time budget, explicitly
-documenting what wasn't covered rather than implying full coverage. Zero
-spec edits anywhere. Zero forks. Every finding traced to actual evidence (a
-real request/response, a real log line, or a real source file) — never
-asserted on assumption.
+`integrations`, `marketplace-apps`, `miscellaneous`, `omnichannel`) with
+real, committed per-operation examples, and `statistics` at real-example
+depth for its 2 reachable operations (the rest genuinely Enterprise-gated).
+`omnichannel`'s coverage is scoped to everything reachable without a real
+online-agent presence (a verified environment constraint, not a shortcut —
+see its dated section above), explicitly documenting what wasn't covered
+rather than implying full coverage. Zero spec edits anywhere. Zero forks.
+Every finding traced to actual evidence (a real request/response, a real
+log line, or a real source file) — never asserted on assumption.
 
 **Real app bugs found (candidates for an app fix, not spec drift):**
 1. `GET /api/v1/instances.get` — undocumented `400`, raw internal
