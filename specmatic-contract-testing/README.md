@@ -828,9 +828,12 @@ assumption.
 **Confirmed-still-present spec defects** (objective, not judgment calls;
 logged, never edited): `integrations.create`'s unconditional
 `required: [event, urls]` contradicting its own field descriptions (the
-exact defect the old branch mis-handled by forking the spec); three
+exact defect the old branch mis-handled by forking the spec); four
 missing `/api` path prefixes (`marketplace-apps.yaml` x2,
-`miscellaneous.yaml` x1).
+`miscellaneous.yaml` x1, `settings.yaml`'s `media-calls.state` — found
+via Step 5 resiliency testing, and the one case among these four where
+a scoped OpenAPI overlay corrects the path for testing purposes, see
+Step 5).
 
 **Systemic accepted-drift categories** (the app is richer than the docs,
 not wrong): undocumented real fields on message/room/error objects
@@ -921,14 +924,82 @@ run — schema resiliency multiplies test count with type-mutation
 variants like "the key `code` is mutated from string to boolean"), 4
 passes, 114 failures, **0 errors** — clean execution, no crashes.
 
-**Full 12-spec run:** executing via the `specmatic-resiliency-test-all`
-compose service (1611 operations × fuzzed variants is a large surface —
-well beyond what's practical to run to completion interactively). Left
-running in the background rather than blocking the rest of this project
-on it; this is exactly the kind of exhaustive, informational, non-gating
-run that belongs in CI (`specmatic-resiliency-test.yml`, Step 6),
-executing on every PR/push going forward, not something that needs to
-finish once by hand. No coverage gate applies to this run (see
+**Full 12-spec run:** executed via the `specmatic-resiliency-test-all`
+compose service (1611 operations × fuzzed variants is a large surface).
+The first attempt at all 12 together got interrupted about an hour in,
+partway through `rooms.yaml` (8 of 12 specs already exercised), by a
+Docker Desktop restart unrelated to Specmatic or the app itself — no
+report exists for that partial pass since Specmatic only writes its
+JUnit output at the very end of a run. Rather than re-run all 12 (this
+is a report-only, non-gating run — see below — so a single combined
+number across all 12 isn't required), re-ran just the 4 specs that
+hadn't finished: `rooms`, `settings`, `statistics`, `user-management`.
+
+**Results, these 4 specs:** 8492 tests, 20 passes, **8472 failures, 0
+errors** — critically, **zero crashes, 500s, hangs, or connection
+failures** across the whole run. RocketChat never breaks under fuzzed
+input; every failure is a spec-shape mismatch, not a robustness bug.
+All 8472 collapse into exactly four causes, three of which need no
+action and one of which was fixed here (in the test harness, never the
+spec itself):
+
+1. **R0002, HTTP status mismatch — 11,432 occurrences, no action
+   needed.** Root cause confirmed by inspection: this run has no real
+   auth wired (the `--config`/`--examples` conflict noted above), so
+   every "positive" scenario sends syntactically-valid but random
+   garbage tokens and RocketChat correctly returns `401` instead of the
+   spec's expected `200`. The app is behaving correctly; there's nothing
+   to fix.
+2. **R2003, unknown property — 11,294 occurrences, no action needed.**
+   Traced to one shared component, `authorizationError` (referenced by
+   nearly every operation's `401` response across all 12 files), which
+   declares only `{status, message}`. RocketChat's actual 401 body is
+   always `{success, error, status, message}` — two genuine extra
+   fields, plus an analogous undeclared `enterprise` field on
+   `settings.public` items. Same "additive undocumented fields, no
+   behavioral harm" category already used elsewhere in this README —
+   `success` is Rocket.Chat's universal REST convention, removing it
+   would be an app regression, and the spec is frozen, so this is
+   logged, not changed.
+3. **R1001, type mismatch — 66 occurrences, no action needed.**
+   `settings.public`'s `value: oneOf: [boolean, string]` doesn't cover
+   real numeric settings (rate-limit/timeout values like `500`, `300`,
+   `100`). The app's values are correct; the spec's polymorphism is
+   incomplete — parallel to the already-documented `md[].value[].value`
+   gap. Logged, not patched.
+4. **R1002/R1001, `GET /media-calls.state` — a genuine, fixed, spec
+   path defect.** Live-verified: `GET /media-calls.state` (the path
+   `settings.yaml` actually declares) 200s with RocketChat's SPA HTML
+   shell — it isn't a real route, just Meteor's catch-all fallback.
+   `GET /api/v1/media-calls.state` (missing prefix restored) returns
+   real JSON: `{"calls":[],"success":true}`. This is the exact defect
+   class the [Specmatic labs overlays
+   lab](https://github.com/specmatic/labs/blob/main/overlays/README.md)
+   demonstrates (a path-prefix mismatch between contract and deployed
+   service) and it's fixed the way that lab recommends: an **OpenAPI
+   overlay** (`specmatic/overlays/media-calls-path.overlay.yaml`,
+   applied via `--overlay-file`), not a spec edit. The overlay adds the
+   correctly-prefixed path (identical operation body) and removes the
+   wrong one, entirely in-memory at test time — the `contracts`
+   submodule is never touched, forked, or committed to; the real defect
+   still needs to be raised with the spec upstream on your own timeline.
+   Verified after the fix: `media-calls.state`'s only remaining failures
+   are the same R0002/R2003 categories every other endpoint shows —
+   the path-specific failures are gone.
+
+   **Deliberately not extended to categories 2 or 3 above.** An overlay
+   could technically widen `authorizationError` or the `value oneOf` to
+   make those failures disappear too, but both are already-triaged,
+   intentional accepted drift, not test-setup defects — doing that
+   would just be "patch the spec until tests pass" wearing a different
+   hat, the exact failure mode this project restarted to get away from.
+   The overlay stays scoped to the one case where the *test* was wrong
+   (testing a path that doesn't exist), not where the *app* was
+   "wrong" (it wasn't).
+
+This exhaustive, informational, non-gating run belongs in CI
+(`specmatic-resiliency-test.yml`, Step 6), executing on every PR/push
+going forward. No coverage gate applies to this run (see
 `specmatic_resiliency.yaml`) — "coverage" isn't a meaningful pass/fail
 signal under fuzzing the way it is for the contract-correctness run.
 

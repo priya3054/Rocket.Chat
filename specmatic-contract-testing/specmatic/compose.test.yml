@@ -180,6 +180,7 @@ services:
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
+      - ../specmatic/overlays:/usr/src/app/overlays:ro
       - ../specmatic/reports/all:/usr/src/app/reports
     depends_on:
       - rocketchat
@@ -199,6 +200,7 @@ services:
       - /usr/src/app/specs/user-management.yaml
       - --examples
       - /usr/src/app/examples
+      - --overlay-file=/usr/src/app/overlays/media-calls-path.overlay.yaml
       - --testBaseURL=http://rocketchat:${PORT:-3000}
       - --junitReportDir=/usr/src/app/reports
       - --lenient
@@ -209,12 +211,21 @@ services:
   # specmatic_resiliency.yaml for why there's no --examples here
   # (mutually exclusive with --config in this pinned image, and
   # schemaResiliencyTests has no CLI flag).
+  # --overlay-file: scoped, single-purpose correction -- settings.yaml
+  # declares /media-calls.state (missing /api/v1) while the real endpoint
+  # lives at /api/v1/media-calls.state (verified live, see README). Applied
+  # in-memory by Specmatic at test time only; the contracts submodule is
+  # never touched. This is deliberately NOT used to paper over the other,
+  # already-triaged accepted-drift findings (undocumented success/error/
+  # enterprise fields, the settings.public value oneOf gap) -- those stay
+  # as documented drift, not silenced via overlay.
   specmatic-resiliency-test-all:
     image: specmatic/specmatic:2.50.0
     profiles: ["test"]
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/specmatic_resiliency.yaml:/usr/src/app/specmatic.yaml:ro
+      - ../specmatic/overlays:/usr/src/app/overlays:ro
       - ../specmatic/reports/resiliency:/usr/src/app/reports
     depends_on:
       - rocketchat
@@ -233,6 +244,7 @@ services:
       - /usr/src/app/specs/statistics.yaml
       - /usr/src/app/specs/user-management.yaml
       - --config=/usr/src/app/specmatic.yaml
+      - --overlay-file=/usr/src/app/overlays/media-calls-path.overlay.yaml
       - --testBaseURL=http://rocketchat:${PORT:-3000}
       - --junitReportDir=/usr/src/app/reports
       - --lenient
