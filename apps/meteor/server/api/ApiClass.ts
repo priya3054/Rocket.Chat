@@ -9,6 +9,7 @@ import { ajv } from '@rocket.chat/rest-typings';
 import { wrapExceptions } from '@rocket.chat/tools';
 import type { ValidateFunction } from 'ajv';
 import { Accounts } from 'meteor/accounts-base';
+import { Match } from 'meteor/check';
 import { DDP } from 'meteor/ddp';
 // eslint-disable-next-line import/no-duplicates
 import { DDPCommon } from 'meteor/ddp-common';
@@ -1088,7 +1089,16 @@ export class APIClass<TBasePath extends string = '', TOperations extends Record<
 							},
 						});
 					} catch (error) {
-						if (!(error instanceof Meteor.Error)) {
+						// Meteor's own `check()` (used by the built-in "password" login handler to validate
+						// the options shape) throws Match.Error for an unexpected/extra key -- e.g. a REST
+						// caller sending `resume` alongside password fields, which loginCompatibility() above
+						// passes through unnormalized once it sees a key it doesn't recognize. Match.Error
+						// isn't a Meteor.Error subclass, so without this it fell into the generic 500 branch
+						// below instead of a normal auth-rejection response. Match.Error already carries its
+						// own sanitized Meteor.Error(400, ...) for exactly this purpose.
+						const normalizedError = error instanceof Match.Error ? error.sanitizedError : error;
+
+						if (!(normalizedError instanceof Meteor.Error)) {
 							return self.internalError();
 						}
 
@@ -1097,10 +1107,10 @@ export class APIClass<TBasePath extends string = '', TOperations extends Record<
 						if (!applyBreakingChanges) {
 							Object.assign(result.body, {
 								status: 'error',
-								error: error.error,
-								details: error.details,
-								message: error.reason || error.message,
-								...(error.reason === 'User not found' && {
+								error: normalizedError.error,
+								details: normalizedError.details,
+								message: normalizedError.reason || normalizedError.message,
+								...(normalizedError.reason === 'User not found' && {
 									error: 'Unauthorized',
 									message: 'Unauthorized',
 								}),

@@ -63,25 +63,41 @@ DEPRECATED_COMPOSE_ACK=1 docker compose \
 
 Serves a schema-accurate fake RocketChat API on `http://localhost:9000`.
 
-### Provider contract test (one spec file at a time)
+### Provider contract test — all 12 specs (real RocketChat instance required)
 
-Real RocketChat instance required. Currently covers `authentication.yaml`;
-more spec files get added as each prior one's findings are triaged.
+All 12 spec files have been triaged against the live app (see "Issues found
+and fixed" below for the per-file findings). This is the command that
+actually runs all of them together and is what CI runs (Step 6):
 
 ```sh
 # 1. Bring up RocketChat + MongoDB (see above), wait for it to answer on :3000
 
-# 2. Capture a live admin auth token into an external Specmatic example
-#    (gitignored -- RocketChat issues a fresh token per container boot)
+# 2. Capture a live admin auth token + real fixture data (messages, a DM
+#    room, a custom user status, etc.) into external Specmatic examples
+#    (gitignored -- RocketChat issues a fresh token per container boot, so
+#    this has to be regenerated every time the container restarts)
 ../specmatic/scripts/regenerate-auth-examples.sh
 
-# 3. Run the contract test
+# 3. Run the contract test, all 12 specs together
 DEPRECATED_COMPOSE_ACK=1 docker compose \
   -f compose.yml -f ../specmatic/compose.test.yml \
-  --profile test up specmatic-contract-test
+  --profile test up specmatic-contract-test-all
 ```
 
-JUnit report lands in `specmatic/reports/contract/TEST-junit-jupiter.xml`.
+JUnit report lands in `specmatic/reports/all/TEST-junit-jupiter.xml`. Only
+~4% of operations have real committed examples (see Step 4) — most
+failures reported are pre-triaged, already-documented "accepted drift" or
+"spec blocker" entries below, not new findings; see each spec file's
+section for what's actually covered vs. spot-checked vs. untested.
+
+If you want to iterate on a single spec file instead of the full run (e.g.
+while adding new examples), the per-file services this project was
+developed against are still in `compose.test.yml` --
+`specmatic-contract-test` (`authentication.yaml`),
+`specmatic-contract-test-content-management`,
+`specmatic-contract-test-notifications`,
+`specmatic-contract-test-messaging` -- same `--profile test up <service>`
+pattern, swapping the service name.
 
 **Important, verified empirically against `specmatic/specmatic:2.50.0`:**
 supplying `--config` alongside `--examples` silently disables external
@@ -90,9 +106,47 @@ have an `examples` key (its own validation error lists `governance`,
 `license`, `settings` as the only top-level `specmatic:` properties), yet
 adding `--config` still suppresses the CLI `--examples` flag. Since
 `schemaResiliencyTests` is off by default with no config anyway, this
-contract run omits `--config` entirely for now; it comes back once
-governance/coverage-gate config is wired (Step 4), at which point real
-example loading needs re-verifying against that combination too.
+contract run omits `--config` entirely; that's why the coverage gate below
+is enforced by parsing stdout rather than Specmatic's own
+`governance.successCriteria` (which needs `--config`).
+
+### Honest coverage gate check
+
+After the contract-test-all run above, the same check CI enforces (Step 4):
+
+```sh
+grep -oE '[0-9]+% API Coverage reported' <captured-output>.log
+```
+
+Compare against the **4% baseline** recorded in Step 4 below — this rises
+only as real committed examples get added to more spec files, never by
+loosening the check.
+
+### Resiliency (fuzz) test — all 12 specs
+
+Same live RocketChat, no real auth needed (see Step 5 for why). Checks
+whether RocketChat rejects deliberately malformed/mutated input gracefully
+instead of crashing:
+
+```sh
+DEPRECATED_COMPOSE_ACK=1 docker compose \
+  -f compose.yml -f ../specmatic/compose.test.yml \
+  --profile test up specmatic-resiliency-test-all
+```
+
+JUnit report lands in `specmatic/reports/resiliency/TEST-junit-jupiter.xml`.
+Finishes in a few minutes, not the 1hr+ an earlier unfiltered attempt took
+— see Step 5 for why `GET /livechat/rooms` is excluded via `--filter`, and
+for the one path defect (`media-calls.state`) corrected via an OpenAPI
+overlay (`--overlay-file`, never a spec edit) rather than left broken or
+silently dropped.
+
+### CI
+
+All of the above runs automatically on push/PR via the workflows described
+in Step 6 — see that section for the exact gates (hard: consumer-mock;
+soft/report-only: contract-test's individual run, resiliency-test,
+examples-lint) and why each is scoped the way it is.
 
 ## Issues found and fixed
 
@@ -1002,6 +1056,60 @@ This exhaustive, informational, non-gating run belongs in CI
 going forward. No coverage gate applies to this run (see
 `specmatic_resiliency.yaml`) — "coverage" isn't a meaningful pass/fail
 signal under fuzzing the way it is for the contract-correctness run.
+
+### 2026-07-19 — Full 12-spec resiliency run + a real app fix
+
+With the `GET /livechat/rooms` filter above in place, ran all 12 specs
+together for real: **~9 minutes** (down from 1hr+ unfiltered), 1616
+operations eligible, 33% API coverage under resiliency's own combinatorial
+generation (a different, unrelated number from Step 4's 4% contract-test
+coverage). **19,477 tests, 119 successes, 19,358 failures, 0 errors.**
+
+Every failure again collapses into the same categories already established
+above (R0002 no-real-auth artifact, R2003 undocumented `success`/`error`/
+`enterprise` fields, R1001 `settings.public` value-type gap) — no new
+accepted-drift category at full scale.
+
+**One genuine, new, real app bug found and fixed:** `POST /api/v1/login`
+returned a raw `500 Internal Server Error` instead of a normal 4xx when the
+request body contained any key outside `user`/`username`/`email`/
+`password`/`code` (confirmed with a plain `resume` key — any value,
+including `null` or `""`). Verified live with curl before touching any
+code, isolated to exactly that trigger.
+
+**Root cause, traced to the real source, not guessed:**
+`apps/meteor/server/api/ApiClass.ts`'s `loginCompatibility()` (used by the
+REST `POST /login` route) passes the request body straight through
+unnormalized whenever it sees an unrecognized key (line ~998), instead of
+just the intended `user`/`password` shape. That raw body then fails
+Meteor's own `check()` validation inside its built-in password login
+handler, which throws `Match.Error` — a real, legitimate validation
+rejection, but *not* a `Meteor.Error` subclass. The route's catch block
+only special-cased `Meteor.Error` (line ~1091), so `Match.Error` fell
+through to the generic `internalError()` (500) branch instead of the normal
+`unauthorized()` (4xx) one.
+
+**Fix:** `Match.Error` already carries its own sanitized companion error
+for exactly this situation — `Meteor.Error(400, 'Match failed')` (verified
+against Meteor's own `packages/check/match.js` source, since it isn't
+vendored in this repo). The catch block now converts a `Match.Error` to
+its `sanitizedError` before the existing `Meteor.Error` check, so it flows
+through the same 4xx path as every other auth rejection instead of the
+500 fallback. `@types/meteor` doesn't declare `Match.Error` at all (checked
+against the exact pinned version, `2.9.11`) even though it's a real,
+correctly-prototyped class at runtime, so this repo's existing local
+type-augmentation file
+(`apps/meteor/definition/externals/meteor/check.d.ts`, which already
+extends `meteor/check`'s types for the same reason) got a matching
+declaration added rather than reaching for an `any` cast.
+
+**Verified, not assumed:** reproduced live via curl before the fix, traced
+every line cited above by reading the actual file, confirmed the fix
+compiles with a full `apps/meteor` typecheck (`node_modules`/`yarn.lock`
+had to be installed fresh for this — see this session's history for the
+Node-version/engine-check detour that required) — zero new errors
+introduced, only 2 pre-existing unrelated errors in a broken third-party
+`@rocket.chat/storybook-config` type stub file.
 
 ## Step 6: CI (GitHub Actions, no PR)
 
