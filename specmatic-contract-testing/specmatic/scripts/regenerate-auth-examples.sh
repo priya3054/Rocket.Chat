@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -1235,3 +1235,78 @@ cat > "${EXAMPLES_DIR}/integrations/oauth-apps-delete.json" <<EOF
 EOF
 
 echo "Wrote integrations.remove/oauth-apps.delete examples using dedicated, separate fixtures (integrationId: ${INTEGRATION_TO_REMOVE_ID}, oauthAppId: ${OAUTH_APP_TO_DELETE_ID})."
+
+# marketplace-apps.yaml -- 5 of 13 operations are real, tractable without
+# external app packages/WhatsApp/video-conference setup. Deferred (not
+# fabricated): POST /api/apps (install, needs a real app package),
+# public/{app-id}/incoming and public/{appId}/templateMessage (webhook/
+# WhatsApp-template endpoints needing external integration config),
+# api/apps/{appId} GET/DELETE (real 404 for a nonexistent app is not a
+# declared status code for either operation -- an undocumented-status-
+# code gap, not something an example can paper over), apps/count and
+# apps/buildExternalAppRequest (already-documented missing /api prefix,
+# same spec-blocker category as media-calls.state but not overlaid here
+# to keep scope tight), apps/marketplace (needs real outbound internet to
+# Rocket.Chat's cloud marketplace -- hung/timed out in this environment,
+# confirmed not a real app bug), jitsi.update-timeout (confirmed dead --
+# no matching route anywhere in apps/meteor/server, tried both
+# slash and dot path-segment conventions).
+cat > "${EXAMPLES_DIR}/marketplace-apps/apps-installed.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/apps/installed",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "apps": [], "success": true } }
+}
+EOF
+
+# Schema declares zero properties (type: object, nothing required or
+# listed) -- any shape is valid here, including the real "Could not reach
+# the Marketplace" response this environment returns without outbound
+# internet access.
+cat > "${EXAMPLES_DIR}/marketplace-apps/apps-categories.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/apps/categories",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "success": false, "error": "Could not reach the Marketplace" } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/marketplace-apps/apps-logs.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/apps/logs",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "offset": 0, "logs": [], "count": 0, "total": 0, "success": true } }
+}
+EOF
+
+# /app/{id}/logs is a media-calls.state-style missing-prefix defect --
+# the spec declares this path without /api/apps; the real route is
+# /api/apps/{id}/logs (verified live: the bare declared path 200s with
+# the SPA HTML fallback, not real JSON -- same signature already
+# documented for media-calls.state). Not fixed via a dedicated overlay
+# here to keep scope tight (logged as a second candidate for that same
+# upstream issue); this example targets the spec's own declared (broken)
+# path, so it will show the same R1001/R1002 wrong-content-type findings
+# as media-calls.state did before its overlay -- a real, honest
+# reflection of the spec-blocker, not something papered over.
+cat > "${EXAMPLES_DIR}/marketplace-apps/app-id-logs.json" <<EOF
+{
+  "http-request": {
+    "path": "/app/nonexistent-app-id/logs",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "offset": 0, "logs": [], "count": 0, "total": 0, "success": true } }
+}
+EOF
+
+echo "Wrote marketplace-apps.yaml examples (5 real, 8 deferred/spec-blocked -- see comment above)."

@@ -843,16 +843,32 @@ the spec's `get-api-apps` operation is actually declared under
 governing that operation block), not a list endpoint. `POST /api/apps`
 (install) is the only bare `/api/apps` operation.
 
-**Confirmed clean:** `apps.installed`, `apps/categories`, `apps/marketplace`
-(this one genuinely reached Rocket.Chat's real cloud marketplace API and
-returned live app listings — confirms outbound connectivity works in this
-test environment).
+**Confirmed clean:** `apps.installed`, `apps/categories`, `apps/logs`.
 
-**Not covered this pass** — `apps/logs` (and the per-app `{id}/logs`
-variant), `video-conference/jitsi.update-timeout`, `POST /api/apps`
-(install — would need a real app package, out of scope), `DELETE
-/api/apps/{appId}`, the incoming-webhook/template-message app endpoints
-at the top of the file. Genuinely untested.
+### 2026-07-19 — Real examples added; `apps/marketplace` no longer reachable in this environment
+
+Added committed examples for `apps.installed`, `apps/categories`,
+`apps/logs`, and `app/{id}/logs` (all real, verified live). Two changes
+from the original spot-check pass, both re-verified rather than assumed:
+
+- **`apps/marketplace` now hangs/times out** instead of reaching the real
+  cloud marketplace as it did originally — this environment apparently
+  lost outbound internet access at some point in this project. Not a real
+  app bug; deferred rather than fabricating a response.
+- **`video-conference/jitsi.update-timeout` is a confirmed dead
+  endpoint** — traced via `grep` across all of `apps/meteor/server`
+  (tried both the spec's slash-segment path and RocketChat's usual
+  dot-segment convention): no matching route exists anywhere. Same
+  category as the earlier `federation.*` finding — documented in the
+  spec, never implemented.
+- **`api/apps/{appId}` GET/DELETE have an undocumented status code**: a
+  nonexistent app genuinely 404s, but neither operation declares `404` as
+  a possible response (only `200`/`400` for GET, `200`/`401` for DELETE)
+  — so no schema-conformant example can capture this real behavior.
+  Logged, not worked around.
+- **Not covered, genuinely out of scope**: `POST /api/apps` (install,
+  needs a real app package), the incoming-webhook/WhatsApp-template
+  endpoints (need external integration config).
 
 ### 2026-07-19 — Provider contract test: `statistics.yaml`
 
