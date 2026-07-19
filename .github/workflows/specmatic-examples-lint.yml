@@ -16,7 +16,7 @@ on:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-examples-lint.yml"
   push:
-    branches: [develop]
+    branches: [develop, specmatic]
     paths:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-examples-lint.yml"

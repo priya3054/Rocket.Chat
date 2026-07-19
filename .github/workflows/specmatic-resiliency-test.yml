@@ -20,7 +20,7 @@ on:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-resiliency-test.yml"
   push:
-    branches: [develop]
+    branches: [develop, specmatic]
     paths:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-resiliency-test.yml"

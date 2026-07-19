@@ -19,7 +19,7 @@ on:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-contract-test.yml"
   push:
-    branches: [develop]
+    branches: [develop, specmatic]
     paths:
       - "specmatic-contract-testing/**"
       - ".github/workflows/specmatic-contract-test.yml"
