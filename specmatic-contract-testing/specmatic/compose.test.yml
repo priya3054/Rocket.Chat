@@ -219,6 +219,16 @@ services:
   # already-triaged accepted-drift findings (undocumented success/error/
   # enterprise fields, the settings.public value oneOf gap) -- those stay
   # as documented drift, not silenced via overlay.
+  # --filter excludes GET /livechat/rooms (omnichannel.yaml): 8+ optional
+  # query params, and schema-resiliency fuzzing combinatorially tests
+  # subsets of them -- this single operation dominated the first full
+  # 12-spec attempt's runtime (over an hour, still not finished when an
+  # unrelated Docker restart killed it). Measured rate elsewhere in this
+  # suite is ~47 tests/sec (8492 tests in ~3 min for the other 4 specs),
+  # so excluding just this one outlier should let the full 12-spec run
+  # finish in a few minutes instead of an hour+. Logged as a known,
+  # understood gap -- not a spec edit, just a scope choice for this one
+  # informational run.
   specmatic-resiliency-test-all:
     image: specmatic/specmatic:2.50.0
     profiles: ["test"]
@@ -249,3 +259,4 @@ services:
       - --junitReportDir=/usr/src/app/reports
       - --lenient
       - --timeout-in-ms=15000
+      - --filter=!(PATH='/api/v1/livechat/rooms')
