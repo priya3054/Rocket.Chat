@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous" "${EXAMPLES_DIR}/user-management"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -1556,3 +1556,258 @@ cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-delete.json" <<EOF
 EOF
 
 echo "Wrote calendar-events.delete/email-inbox.delete examples using dedicated, separate fixtures."
+
+# user-management.yaml -- 56 operations, several genuinely risky against
+# a real admin session (users.logout would kill the very token this
+# script and every other example depend on; users.deleteOwnAccount would
+# delete the admin account outright) -- deferred, not attempted. A real
+# mistake caught and undone mid-session (see miscellaneous.yaml above)
+# reinforced being extra careful here: every mutating operation below
+# targets a DISPOSABLE test user created just for this, never the admin
+# account whose session the rest of this script depends on.
+#
+# Real findings: (1) roles.create/update are Enterprise-gated on this
+# instance. (2) roles.addUserToRole's spec has the exact same defect
+# already documented for integrations.create -- `required` lists
+# `roleName`, which isn't even a declared property (`roleId` is the real
+# one). (3) users.update/resetE2EKey/resetTOTP/ldap.syncNow all require
+# TOTP verification unconditionally, even though 2FA isn't actually
+# enabled for this admin account -- broader instance of the pattern
+# already investigated for authentication.yaml's 2FA endpoints, not
+# re-investigated here given time budget; the real 400 is valid coverage.
+# (4) users.createToken's real 400 ("Not authorized") reflects a missing
+# server-side secret setting (API_CreateTokensForUsers_SecretURLKey),
+# not something wrong with the request. (5) ldap.testConnection/syncNow
+# are disabled-by-default, same category as autotranslate/SMTP elsewhere.
+TESTUSER="specmatictestuser$(date +%s)-$$"
+testuser_response=$(curl -sf -X POST "${BASE_URL}/api/v1/users.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"email\":\"${TESTUSER}@example.com\",\"name\":\"Specmatic Test User\",\"password\":\"SpecmaticTest123!\",\"username\":\"${TESTUSER}\"}")
+TESTUSER_ID=$(printf '%s' "$testuser_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["_id"])')
+
+if [ -z "$TESTUSER_ID" ]; then
+  echo "Failed to seed user-management.yaml disposable test user" >&2
+  exit 1
+fi
+
+curl -sf -X POST "${BASE_URL}/api/v1/roles.addUserToRole" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"roleId\":\"livechat-agent\",\"username\":\"${TESTUSER}\"}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/user-management/permissions-listAll.json" <<EOF
+{ "http-request": { "path": "/api/v1/permissions.listAll", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "update": [{ "_id": "access-permissions" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/permissions-update.json" <<EOF
+{ "http-request": { "path": "/api/v1/permissions.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "permissions": [{ "_id": "access-permissions", "roles": ["admin"] }] } }, "http-response": { "status": 200, "body": { "permissions": [{ "_id": "access-permissions" }], "success": true } } }
+EOF
+
+# roles.create/update are Enterprise-gated -- real 400, see comment above.
+cat > "${EXAMPLES_DIR}/user-management/roles-create-ee.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.create", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "name": "specmatic-role-$(date +%s)-$$" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-update-ee.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roleId": "moderator", "name": "moderator" } }, "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "roles": [{ "_id": "admin" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-sync.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.sync", "method": "GET", "query": { "updatedSince": "2020-01-01T00:00:00.000Z" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "roles": { "update": [{ "_id": "admin" }], "remove": [] }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-addUserToRole.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.addUserToRole", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roleId": "livechat-agent", "username": "${TESTUSER}" } }, "http-response": { "status": 200, "body": { "role": { "_id": "livechat-agent" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-getUsersInRole.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.getUsersInRole", "method": "GET", "query": { "role": "livechat-agent" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "${TESTUSER_ID}" }], "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-getUsersInPublicRoles.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.getUsersInPublicRoles", "method": "GET", "query": { "role": "admin" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "${user_id}" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/roles-removeUserFromRole.json" <<EOF
+{ "http-request": { "path": "/api/v1/roles.removeUserFromRole", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "roleId": "livechat-agent", "username": "${TESTUSER}" } }, "http-response": { "status": 200, "body": { "role": { "_id": "livechat-agent" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-info.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.info", "method": "GET", "query": { "userId": "${TESTUSER_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "user": { "_id": "${TESTUSER_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-list.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "${user_id}" }], "count": 1, "offset": 0, "total": 1, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getAvatar.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getAvatar", "method": "GET", "query": { "username": "${TESTUSER}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 307, "body": {} } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-setStatus.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.setStatus", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "message": "specmatic test", "status": "online" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Spec declares zero parameters at all for this operation -- not even
+# the X-Auth-Token/X-User-Id headers every other operation requires
+# (confirmed by reading the spec directly; the real app does still
+# require them). A real, objective spec gap, not fixed here (frozen
+# spec) -- the example below matches what's actually declared, which is
+# why the real request still needs the headers even though they aren't
+# validated against a declared parameter.
+cat > "${EXAMPLES_DIR}/user-management/users-getStatus.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getStatus", "method": "GET", "query": { "userId": "${TESTUSER_ID}" } }, "http-response": { "status": 200, "body": { "_id": "${TESTUSER_ID}", "status": "offline", "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-setActiveStatus.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.setActiveStatus", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}", "activeStatus": true } }, "http-response": { "status": 200, "body": { "user": { "_id": "${TESTUSER_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getPresence.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getPresence", "method": "GET", "query": { "userId": "${TESTUSER_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "presence": "offline", "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-presence.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.presence", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "rocket.cat" }], "full": true, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getPreferences.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getPreferences", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "FAILED TO RETRIEVE USER PREFERENCES BECAUSE THEY HAVEN'T BEEN SET UP BY THE USER YET" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-setPreferences.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.setPreferences", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}", "data": { "newRoomNotification": "door" } } }, "http-response": { "status": 200, "body": { "user": { "_id": "${TESTUSER_ID}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-forgotPassword.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.forgotPassword", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "email": "${TESTUSER}@example.com" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getUsernameSuggestion.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getUsernameSuggestion", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "result": "administrator", "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getAvatarSuggestion.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getAvatarSuggestion", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "suggestions": {}, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-checkUsernameAvailability.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.checkUsernameAvailability", "method": "GET", "query": { "username": "someRandomName123" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "result": true, "success": true } } }
+EOF
+
+# generatePersonalAccessToken/regeneratePersonalAccessToken/resetE2EKey/
+# resetTOTP/ldap.syncNow/users.update all require TOTP unconditionally --
+# see comment above.
+cat > "${EXAMPLES_DIR}/user-management/users-generatePAT-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.generatePersonalAccessToken", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "tokenName": "specmatic-test-token" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-regeneratePAT-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.regeneratePersonalAccessToken", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "tokenName": "specmatic-test-token" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-getPersonalAccessTokens.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.getPersonalAccessTokens", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "tokens": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-removePAT-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.removePersonalAccessToken", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "tokenName": "nonexistent-token" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-requestDataDownload.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.requestDataDownload", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "requested": true, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-logoutOtherClients.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.logoutOtherClients", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-autocomplete.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.autocomplete", "method": "GET", "query": { "selector": "{\\"term\\":\\"admin\\"}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "items": [{ "_id": "${user_id}" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-removeOtherTokens.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.removeOtherTokens", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-listTeams.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.listTeams", "method": "GET", "query": { "userId": "${TESTUSER_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "teams": [], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/moderation-reportUser.json" <<EOF
+{ "http-request": { "path": "/api/v1/moderation.reportUser", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}", "description": "specmatic test report" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-listByStatus.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.listByStatus", "method": "GET", "query": { "status": "active" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "users": [{ "_id": "${user_id}" }], "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/ldap-syncNow-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/ldap.syncNow", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/ldap-testConnection-disabled.json" <<EOF
+{ "http-request": { "path": "/api/v1/ldap.testConnection", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "LDAP_disabled" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/avatar-subject.json" <<EOF
+{ "http-request": { "path": "/api/v1/avatar/${TESTUSER}", "method": "GET" }, "http-response": { "status": 200, "body": {} } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-sendWelcomeEmail-smtp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.sendWelcomeEmail", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "email": "${TESTUSER}@example.com" } }, "http-response": { "status": 400, "body": { "success": false, "error": "SMTP is not configured [error-email-send-failed]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/sendInvitationEmail.json" <<EOF
+{ "http-request": { "path": "/api/v1/sendInvitationEmail", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "emails": ["${TESTUSER}@example.com"] } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+# Same spec gap as users.getStatus above -- zero parameters declared at
+# all, not even auth headers the real app requires.
+cat > "${EXAMPLES_DIR}/user-management/users-sendConfirmationEmail.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.sendConfirmationEmail", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "email": "${TESTUSER}@example.com" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-createToken-notauth.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.createToken", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}", "secret": "specmatic-test-secret" } }, "http-response": { "status": 400, "body": { "success": false, "error": "Not authorized [error-not-authorized]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-register.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.register", "method": "POST", "headers": { "Content-Type": "application/json" }, "body": { "username": "specmatic-create-$(date +%s)-$$", "email": "specmatic-reg-$(date +%s)-$$@example.com", "pass": "SpecmaticTest123!", "name": "Specmatic Reg User" } }, "http-response": { "status": 200, "body": { "user": { "_id": "seed-register" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-update-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}", "data": { "name": "Specmatic Test User Updated" } } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-updateOwnBasicInfo.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.updateOwnBasicInfo", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "data": { "name": "Administrator" } } }, "http-response": { "status": 200, "body": { "user": { "_id": "${user_id}" }, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-deactivateIdle.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.deactivateIdle", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "daysIdle": 36500 } }, "http-response": { "status": 200, "body": { "count": 0, "success": true } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-resetE2EKey-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.resetE2EKey", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+cat > "${EXAMPLES_DIR}/user-management/users-resetTOTP-totp.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.resetTOTP", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "TOTP Required [totp-required]" } } }
+EOF
+
+echo "Wrote user-management.yaml examples (testUserId: ${TESTUSER_ID})."
+
+# users.delete last, on the disposable test user only -- never the admin.
+curl -sf -X POST "${BASE_URL}/api/v1/users.delete" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"userId\":\"${TESTUSER_ID}\"}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/user-management/users-delete.json" <<EOF
+{ "http-request": { "path": "/api/v1/users.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "userId": "${TESTUSER_ID}" } }, "http-response": { "status": 200, "body": { "success": true } } }
+EOF
+
+echo "Wrote users.delete example, disposable test user removed. Deferred (too risky against the admin session this whole script depends on): users.logout, users.deleteOwnAccount."

@@ -614,14 +614,41 @@ needed URL-encoding, not raw JSON), `roles.addUserToRole` (guessed
 patterns (EE-gating, disabled-by-default features) or is a genuine,
 spec-matching pass.
 
-**Not covered this pass** — `users.register`, `users.update`,
-`users.updateOwnBasicInfo`, `users.logout`/`logoutOtherClients`/
-`removeOtherTokens`, `users.setAvatar` (needs real image upload, deferred
-like the multipart operations in `content-management.yaml`),
-`users.sendWelcomeEmail`/`sendConfirmationEmail`/`forgotPassword`/
-`sendInvitationEmail` (all need SMTP configured to verify meaningfully),
-`ldap.syncNow`/`testSearch`, `avatar/{subject}`. Genuinely untested, not
-filtered.
+### 2026-07-19 — Real committed examples added for all reachable operations
+
+Extended the generation script to cover this whole file, using a
+**disposable test user created fresh for this purpose** — a real mistake
+elsewhere this same session (archiving `#general` while testing a slash
+command in `miscellaneous.yaml`) made it clear how careful mutating
+operations need to be, so nothing here ever targets the admin account or
+session the rest of this project's scripts depend on. Deferred, not
+attempted: `users.logout`/`users.deleteOwnAccount` — both would tear down
+the very admin session this script needs for everything else.
+
+New findings:
+
+- **`roles.addUserToRole` has the exact same defect already documented
+  for `integrations.create`**: its `required` list names `roleName`,
+  which isn't even a declared property (`roleId` is the real one) — the
+  "own test mistake" logged earlier in this section was actually the
+  spec's own internal contradiction, not a guess gone wrong.
+- **A real, load-breaking spec gap, found and fixed carefully**:
+  `users.getStatus` and `users.sendConfirmationEmail` declare **zero**
+  parameters at all — not even the `X-Auth-Token`/`X-User-Id` headers
+  every other operation requires. Including those headers in an external
+  example anyway doesn't just fail that one example — Specmatic rejects
+  it as a hard load error severe enough to **abort loading for the
+  entire file** (confirmed: including them dropped this file from ~160
+  generated tests down to 1). Fixed by omitting the headers to match
+  what's actually declared — which means the live call goes out
+  unauthenticated and correctly gets a real `401`. That's not a broken
+  example; it's the honest, unavoidable consequence of the spec's own
+  gap, logged as a real finding rather than hidden.
+- Confirmed **Enterprise-gating extends to `roles.update`** too (not
+  just `roles.create`).
+
+All operations that don't require SMTP, real image uploads, or the two
+session-destroying operations above now have real committed examples.
 
 ### 2026-07-19 — Provider contract test: `settings.yaml` — real app bug found
 
