@@ -85,7 +85,7 @@ DEPRECATED_COMPOSE_ACK=1 docker compose \
 ```
 
 JUnit report lands in `specmatic/reports/all/TEST-junit-jupiter.xml`. Only
-~4% of operations have real committed examples (see Step 4) — most
+~5% of operations have real committed examples (see Step 4) — most
 failures reported are pre-triaged, already-documented "accepted drift" or
 "spec blocker" entries below, not new findings; see each spec file's
 section for what's actually covered vs. spot-checked vs. untested.
@@ -118,7 +118,7 @@ After the contract-test-all run above, the same check CI enforces (Step 4):
 grep -oE '[0-9]+% API Coverage reported' <captured-output>.log
 ```
 
-Compare against the **4% baseline** recorded in Step 4 below — this rises
+Compare against the **5% baseline** recorded in Step 4 below — this rises
 only as real committed examples get added to more spec files, never by
 loosening the check.
 
@@ -956,6 +956,19 @@ mechanism, so it doesn't count toward Specmatic's measured coverage.
 project's own rule (and the exact thing the old branch got right once it
 stopped inflating gates).
 
+**Re-measured 2026-07-19, after the `media-calls.state` overlay fix
+(Step 5): 5% API coverage, 1271 tests, 53 passes, 1218 failures, 0
+errors.** The one-point rise is the `media-calls.state` overlay giving
+that operation real, countable coverage for the first time (it was
+previously untestable — the spec's own declared path didn't exist on the
+live app at all). Still nowhere near 100% and not expected to be for
+this pass — the real ceiling on coverage is "how many spec files have
+real, committed Specmatic examples," which is 4 of 12 by design (the
+other 8 were spot-checked with direct `curl`, a real but
+differently-scoped form of verification that doesn't count toward this
+specific metric). Raising this further means adding real examples to
+more of the remaining 8 files, not a config change.
+
 **Why no `--config`/`governance.successCriteria`:** already established
 per-file — supplying `--config` alongside `--examples` silently disables
 external example loading entirely in this pinned image (verified back in
@@ -966,13 +979,13 @@ misleading configuration.
 
 **How the gate actually works, then:** the coverage percentage is parsed
 straight from Specmatic's own stdout (`grep -oP '\d+(?=% API Coverage)'`)
-in CI (see Step 6), compared against a stored baseline of **4%**, and
-fails the build if it drops below that — the same "parse stdout, gate in
-a separate step" approach the old branch already found necessary (its
-own README noted "Specmatic's own exit code conflates 'tests failed'
-with 'coverage gate failed'"). The baseline rises only as real spec
-files get real committed examples in future work, never by loosening the
-check.
+in CI (see Step 6), compared against a stored baseline (**5%** as of the
+2026-07-19 re-measurement above), and fails the build if it drops below
+that — the same "parse stdout, gate in a separate step" approach the old
+branch already found necessary (its own README noted "Specmatic's own
+exit code conflates 'tests failed' with 'coverage gate failed'"). The
+baseline rises only as real spec files get real committed examples in
+future work, never by loosening the check.
 
 ## Step 5: Resiliency testing
 
@@ -1177,6 +1190,31 @@ live, not assumed, after several genuinely failed attempts:
   values, not random strings), `specmatic-resiliency-test-all`, and
   `specmatic-contract-test-all` (dictionary coexisting cleanly with both
   `--examples` and the `media-calls.state` overlay in the same run).
+
+### Examples reorganized into per-spec subfolders
+
+`specmatic/examples/` was a single flat directory holding all 60 files
+for all 4 populated specs mixed together. Moved to
+`specmatic/examples/<spec-name>/` (one subfolder per spec) ahead of
+pushing real coverage further across the remaining 8 files, so the
+directory stays navigable as it grows. Verified before relying on it:
+
+- **Specmatic recurses into subfolders correctly** under `--examples=<dir>`
+  — confirmed live (`Loading test file /specs/examples/authentication/
+  login.json`), and the real `specmatic-contract-test-all` run still
+  loaded all 59 regenerated examples afterward (`59 examples(s) found`) —
+  zero examples lost in the move.
+- **Fixes real noise hit earlier**: checking "are external examples valid"
+  per spec file (`examples validate --examples-dir=...`) previously
+  reported inflated "invalid" counts purely because examples belonging to
+  *other* specs sat in the same flat folder and got flagged as "no
+  matching specification" — cosmetic noise, not real failures. Per-spec
+  subfolders remove that confusion for any future check.
+- `regenerate-auth-examples.sh` and `.gitignore` both updated to match —
+  only `examples/authentication/login.json` (hand-maintained,
+  placeholder-only data) stays committed; everything else in every
+  subfolder is regenerated per run and gitignored, same rule as before,
+  just under the new paths.
 
 ## Step 6: CI (GitHub Actions, no PR)
 

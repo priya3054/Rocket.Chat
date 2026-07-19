@@ -2,7 +2,12 @@
 # per-container-boot auth token or other seeded live-instance data --
 # regenerated before each test run, never committed. login.json is the
 # one example that's hand-maintained with placeholder-only data (the
-# spec's own public example values) and stays committed.
+# spec's own public example values) and stays committed. Examples live in
+# per-spec subfolders (specmatic/examples/<spec-name>/) -- gitignore
+# needs the directory explicitly un-ignored before a file inside it can
+# be un-ignored too.
 specmatic/examples/*
-!specmatic/examples/login.json
+!specmatic/examples/authentication/
+specmatic/examples/authentication/*
+!specmatic/examples/authentication/login.json
 specmatic/reports/

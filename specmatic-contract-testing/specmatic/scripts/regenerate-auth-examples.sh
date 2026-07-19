@@ -20,6 +20,11 @@ BASE_URL="${RC_BASE_URL:-http://localhost:3000}"
 ADMIN_USER="${ADMIN_USERNAME:-admin}"
 ADMIN_PASS="${RC_ADMIN_PASS:-SpecmaticAdmin123!}"
 EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
+# Examples live in per-spec subfolders (specmatic/examples/<spec-name>/),
+# not a flat directory -- keeps things navigable now that coverage is
+# being pushed well beyond these original 4 files, and matches Specmatic's
+# own confirmed-working directory recursion under --examples=<dir>.
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -40,7 +45,7 @@ fi
 # not a live-captured one. A live-captured body would carry undocumented
 # fields (see README "Issues found and fixed") and fail this file's own
 # load-time type-check for the same reason those fields fail the real test.
-cat > "${EXAMPLES_DIR}/get-me.json" <<EOF
+cat > "${EXAMPLES_DIR}/authentication/get-me.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/me",
@@ -71,12 +76,12 @@ cat > "${EXAMPLES_DIR}/get-me.json" <<EOF
 }
 EOF
 
-echo "Wrote ${EXAMPLES_DIR}/get-me.json with a live auth token/userId."
+echo "Wrote ${EXAMPLES_DIR}/authentication/get-me.json with a live auth token/userId."
 
 # content-management.yaml -- read-only (GET) operations. Response bodies
 # below are schema shapes copied from the spec's own inline examples, same
 # reasoning as get-me.json above.
-cat > "${EXAMPLES_DIR}/emoji-custom-all.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/emoji-custom-all.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/emoji-custom.all",
@@ -93,7 +98,7 @@ cat > "${EXAMPLES_DIR}/emoji-custom-all.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/emoji-custom-list.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/emoji-custom-list.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/emoji-custom.list",
@@ -113,7 +118,7 @@ cat > "${EXAMPLES_DIR}/emoji-custom-list.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/custom-sounds-list.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-sounds-list.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-sounds.list",
@@ -130,7 +135,7 @@ cat > "${EXAMPLES_DIR}/custom-sounds-list.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/custom-user-status-list.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-user-status-list.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-user-status.list",
@@ -151,7 +156,7 @@ EOF
 # available without first exercising custom-sounds.create (deferred --
 # multipart/form-data upload, see README). This exercises the documented
 # "not found" path instead, which is real, meaningful coverage on its own.
-cat > "${EXAMPLES_DIR}/custom-sounds-getone-notfound.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-sounds-getone-notfound.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-sounds.getOne",
@@ -189,7 +194,7 @@ if [ -z "$seed_id" ]; then
   exit 1
 fi
 
-cat > "${EXAMPLES_DIR}/custom-user-status-create.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-user-status-create.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-user-status.create",
@@ -207,7 +212,7 @@ cat > "${EXAMPLES_DIR}/custom-user-status-create.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/custom-user-status-update.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-user-status-update.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-user-status.update",
@@ -225,7 +230,7 @@ cat > "${EXAMPLES_DIR}/custom-user-status-update.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/custom-user-status-delete.json" <<EOF
+cat > "${EXAMPLES_DIR}/content-management/custom-user-status-delete.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/custom-user-status.delete",
@@ -246,7 +251,7 @@ echo "Wrote custom-user-status create/update/delete examples (seeded _id: ${seed
 # uploads. push.get is deferred: it needs a real message _id, which
 # depends on messaging.yaml (rooms/messages) not yet exercised -- a
 # cross-spec fixture dependency, not a same-file quick win like the rest.
-cat > "${EXAMPLES_DIR}/banners.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/banners.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/banners",
@@ -258,7 +263,7 @@ cat > "${EXAMPLES_DIR}/banners.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/banners-by-id.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/banners-by-id.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/banners/ByehQjC44FwMeiLbX",
@@ -272,7 +277,7 @@ EOF
 
 # Exercises the real "not found" path (no banner exists to dismiss on a
 # fresh instance) -- same reasoning as custom-sounds-getone-notfound.json.
-cat > "${EXAMPLES_DIR}/banners-dismiss-notfound.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/banners-dismiss-notfound.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/banners.dismiss",
@@ -284,7 +289,7 @@ cat > "${EXAMPLES_DIR}/banners-dismiss-notfound.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/push-info.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/push-info.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/push.info",
@@ -300,7 +305,7 @@ EOF
 # scenario ordering isn't guaranteed relative to this one), so this is
 # the one real, reproducible outcome for this operation without a live
 # push gateway.
-cat > "${EXAMPLES_DIR}/push-test.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/push-test.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/push.test",
@@ -314,7 +319,7 @@ cat > "${EXAMPLES_DIR}/push-test.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/push-token-create.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/push-token-create.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/push.token",
@@ -332,7 +337,7 @@ cat > "${EXAMPLES_DIR}/push-token-create.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/push-token-delete.json" <<EOF
+cat > "${EXAMPLES_DIR}/notifications/push-token-delete.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/push.token",
@@ -406,7 +411,7 @@ EOF
 MSG_TS=$(printf '%s' "$post_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["ts"])')
 MSG_UPDATED=$(printf '%s' "$post_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_updatedAt"])')
 
-cat > "${EXAMPLES_DIR}/chat-getMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getMessage",
@@ -418,7 +423,7 @@ cat > "${EXAMPLES_DIR}/chat-getMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-react.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-react.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.react",
@@ -430,7 +435,7 @@ cat > "${EXAMPLES_DIR}/chat-react.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-update.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-update.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.update",
@@ -442,7 +447,7 @@ cat > "${EXAMPLES_DIR}/chat-update.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-followMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-followMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.followMessage",
@@ -454,7 +459,7 @@ cat > "${EXAMPLES_DIR}/chat-followMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-unfollowMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-unfollowMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.unfollowMessage",
@@ -466,7 +471,7 @@ cat > "${EXAMPLES_DIR}/chat-unfollowMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-pinMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-pinMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.pinMessage",
@@ -481,7 +486,7 @@ cat > "${EXAMPLES_DIR}/chat-pinMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-unPinMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-unPinMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.unPinMessage",
@@ -493,7 +498,7 @@ cat > "${EXAMPLES_DIR}/chat-unPinMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-starMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-starMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.starMessage",
@@ -505,7 +510,7 @@ cat > "${EXAMPLES_DIR}/chat-starMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-unStarMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-unStarMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.unStarMessage",
@@ -517,7 +522,7 @@ cat > "${EXAMPLES_DIR}/chat-unStarMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-reportMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-reportMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.reportMessage",
@@ -529,7 +534,7 @@ cat > "${EXAMPLES_DIR}/chat-reportMessage.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-ignoreUser.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-ignoreUser.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.ignoreUser",
@@ -541,7 +546,7 @@ cat > "${EXAMPLES_DIR}/chat-ignoreUser.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getPinnedMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getPinnedMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getPinnedMessages",
@@ -553,7 +558,7 @@ cat > "${EXAMPLES_DIR}/chat-getPinnedMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getStarredMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getStarredMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getStarredMessages",
@@ -565,7 +570,7 @@ cat > "${EXAMPLES_DIR}/chat-getStarredMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getDiscussions.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getDiscussions.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getDiscussions",
@@ -577,7 +582,7 @@ cat > "${EXAMPLES_DIR}/chat-getDiscussions.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getMentionedMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getMentionedMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getMentionedMessages",
@@ -589,7 +594,7 @@ cat > "${EXAMPLES_DIR}/chat-getMentionedMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getDeletedMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getDeletedMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getDeletedMessages",
@@ -607,7 +612,7 @@ EOF
 # errorType (unlike most other operations' 400 schemas), confirmed by
 # checking the spec directly after this example was silently dropped at
 # load time for including it.
-cat > "${EXAMPLES_DIR}/chat-getMessageReadReceipts-ee.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getMessageReadReceipts-ee.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getMessageReadReceipts",
@@ -619,7 +624,7 @@ cat > "${EXAMPLES_DIR}/chat-getMessageReadReceipts-ee.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-search.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-search.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.search",
@@ -631,7 +636,7 @@ cat > "${EXAMPLES_DIR}/chat-search.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getURLPreview.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getURLPreview.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getURLPreview",
@@ -643,7 +648,7 @@ cat > "${EXAMPLES_DIR}/chat-getURLPreview.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-syncMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-syncMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.syncMessages",
@@ -655,7 +660,7 @@ cat > "${EXAMPLES_DIR}/chat-syncMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-getThreadsList.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getThreadsList.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getThreadsList",
@@ -670,7 +675,7 @@ EOF
 REPLY_TS=$(printf '%s' "$reply_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["ts"])')
 REPLY_UPDATED=$(printf '%s' "$reply_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["message"]["_updatedAt"])')
 
-cat > "${EXAMPLES_DIR}/chat-getThreadMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-getThreadMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.getThreadMessages",
@@ -682,7 +687,7 @@ cat > "${EXAMPLES_DIR}/chat-getThreadMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-syncThreadMessages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-syncThreadMessages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.syncThreadMessages",
@@ -694,7 +699,7 @@ cat > "${EXAMPLES_DIR}/chat-syncThreadMessages.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-syncThreadsList.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-syncThreadsList.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.syncThreadsList",
@@ -706,7 +711,7 @@ cat > "${EXAMPLES_DIR}/chat-syncThreadsList.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/chat-sendMessage.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-sendMessage.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.sendMessage",
@@ -721,7 +726,7 @@ EOF
 echo "Wrote messaging.yaml chat.* examples."
 
 # dm.* -- real DM room created above (self-DM, "notes to self" pattern).
-cat > "${EXAMPLES_DIR}/dm-list.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-list.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.list",
@@ -732,7 +737,7 @@ cat > "${EXAMPLES_DIR}/dm-list.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-list-everyone.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-list-everyone.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.list.everyone",
@@ -743,7 +748,7 @@ cat > "${EXAMPLES_DIR}/dm-list-everyone.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-members.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-members.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.members",
@@ -760,7 +765,7 @@ EOF
 # curl) -- a genuine type mismatch (see README), and including it as
 # null in our own example fails THIS file's own load-time type-check
 # the same way, so it's left out here (not required by the schema).
-cat > "${EXAMPLES_DIR}/dm-counters.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-counters.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.counters",
@@ -772,7 +777,7 @@ cat > "${EXAMPLES_DIR}/dm-counters.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-messages.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-messages.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.messages",
@@ -786,7 +791,7 @@ EOF
 
 # Disabled by default on this instance -- a real, legitimate feature-flag
 # response, not a bug. See README.
-cat > "${EXAMPLES_DIR}/dm-messages-others-disabled.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-messages-others-disabled.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.messages.others",
@@ -798,7 +803,7 @@ cat > "${EXAMPLES_DIR}/dm-messages-others-disabled.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-history.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-history.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.history",
@@ -810,7 +815,7 @@ cat > "${EXAMPLES_DIR}/dm-history.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-files.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-files.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.files",
@@ -822,7 +827,7 @@ cat > "${EXAMPLES_DIR}/dm-files.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-setTopic.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-setTopic.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.setTopic",
@@ -834,7 +839,7 @@ cat > "${EXAMPLES_DIR}/dm-setTopic.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-close.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-close.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.close",
@@ -846,7 +851,7 @@ cat > "${EXAMPLES_DIR}/dm-close.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-open.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-open.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.open",
@@ -858,7 +863,7 @@ cat > "${EXAMPLES_DIR}/dm-open.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-create.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-create.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.create",
@@ -874,7 +879,7 @@ EOF
 # in the DM room, and this fixture is a self-DM ("notes to self") --
 # creating a second real user account is out of scope for this pass, so
 # this exercises the real error path rather than a fabricated one.
-cat > "${EXAMPLES_DIR}/im-blockUser-invalidroom.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/im-blockUser-invalidroom.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/im.blockUser",
@@ -890,7 +895,7 @@ echo "Wrote messaging.yaml dm.* examples."
 
 # autotranslate.* -- disabled workspace-wide on a fresh instance; a real,
 # legitimate feature-flag response for all three operations, not a bug.
-cat > "${EXAMPLES_DIR}/autotranslate-getSupportedLanguages-disabled.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/autotranslate-getSupportedLanguages-disabled.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/autotranslate.getSupportedLanguages",
@@ -909,7 +914,7 @@ EOF
 # external example is possible without inventing a response shape. This
 # is itself the finding (see README) rather than something to work around.
 
-cat > "${EXAMPLES_DIR}/autotranslate-translateMessage-disabled.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/autotranslate-translateMessage-disabled.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/autotranslate.translateMessage",
@@ -925,7 +930,7 @@ echo "Wrote messaging.yaml autotranslate.* examples."
 
 # chat.delete / dm.delete last -- run only after every operation above
 # that depends on the message/room still existing.
-cat > "${EXAMPLES_DIR}/chat-delete.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/chat-delete.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/chat.delete",
@@ -937,7 +942,7 @@ cat > "${EXAMPLES_DIR}/chat-delete.json" <<EOF
 }
 EOF
 
-cat > "${EXAMPLES_DIR}/dm-delete.json" <<EOF
+cat > "${EXAMPLES_DIR}/messaging/dm-delete.json" <<EOF
 {
   "http-request": {
     "path": "/api/v1/dm.delete",
