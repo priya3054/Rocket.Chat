@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -955,3 +955,283 @@ cat > "${EXAMPLES_DIR}/messaging/dm-delete.json" <<EOF
 EOF
 
 echo "Wrote messaging.yaml chat.delete/dm.delete examples (run last by Specmatic's own scenario ordering, not enforced here)."
+
+# statistics.yaml -- statistics/statistics.list are the only 2 of 11
+# operations reachable on this (Community Edition) instance; both
+# schemas declare zero required fields (confirmed by reading the spec),
+# so a minimal, schema-conformant body is legitimate, not a shortcut.
+cat > "${EXAMPLES_DIR}/statistics/statistics.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/statistics",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "totalUsers": 1, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/statistics/statistics-list.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/statistics.list",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "statistics": [{ "totalUsers": 1 }], "count": 1, "offset": 0, "total": 1, "success": true } }
+}
+EOF
+
+# All 9 engagement-dashboard.* operations are Enterprise-gated on this CE
+# instance (confirmed live via curl: 400, "This is an enterprise feature
+# [error-action-not-allowed]"). The spec's shared 400 schema
+# (components.responses.keyError) only declares success/error -- NOT
+# errorType, which the real response also carries -- so errorType is
+# deliberately omitted here, same reasoning as chat.getMessageReadReceipts
+# in messaging.yaml's example (an extra real field would fail this file's
+# own load-time type-check against the declared schema).
+for op in \
+  "engagement-dashboard-users-new-users:/api/v1/engagement-dashboard/users/new-users" \
+  "engagement-dashboard-users-active-users:/api/v1/engagement-dashboard/users/active-users" \
+  "engagement-dashboard-users-by-time-of-day:/api/v1/engagement-dashboard/users/users-by-time-of-the-day-in-a-week" \
+  "engagement-dashboard-chat-busier-hourly:/api/v1/engagement-dashboard/users/chat-busier/hourly-data" \
+  "engagement-dashboard-chat-busier-weekly:/api/v1/engagement-dashboard/users/chat-busier/weekly-data" \
+  "engagement-dashboard-messages-sent:/api/v1/engagement-dashboard/messages/messages-sent" \
+  "engagement-dashboard-messages-origin:/api/v1/engagement-dashboard/messages/origin" \
+  "engagement-dashboard-top-five-channels:/api/v1/engagement-dashboard/messages/top-five-popular-channels" \
+  "engagement-dashboard-channels-list:/api/v1/engagement-dashboard/channels/list" \
+; do
+  fname="${op%%:*}"
+  path="${op#*:}"
+  cat > "${EXAMPLES_DIR}/statistics/${fname}-ee.json" <<EOF
+{
+  "http-request": {
+    "path": "${path}",
+    "method": "GET",
+    "query": { "start": "2026-01-01", "end": "2026-01-31" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 400, "body": { "success": false, "error": "This is an enterprise feature [error-action-not-allowed]" } }
+}
+EOF
+done
+
+echo "Wrote statistics.yaml examples (2 real, 9 Enterprise-gated)."
+
+# integrations.yaml -- integrations.create requires event/urls
+# unconditionally per its own schema (a known, already-documented spec
+# defect: the field descriptions say they're only required for outgoing
+# integrations, but the schema makes them unconditional) -- so every
+# integration created here is a real outgoing webhook, token included
+# explicitly since a fresh integration otherwise has no token and
+# integrations.update's own validateOutgoingIntegration() call checks the
+# REQUEST BODY's token, not the DB record's (confirmed by reading
+# updateOutgoingIntegration.ts -- a real 400 "Invalid token" happens if
+# the update body omits it, even when the integration already has one).
+integration_response=$(curl -sf -X POST "${BASE_URL}/api/v1/integrations.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"type":"webhook-outgoing","name":"specmatic-test-integration","enabled":true,"username":"admin","channel":"#general","scriptEnabled":false,"event":"sendMessage","urls":["https://example.com/webhook"],"token":"specmatic-webhook-token-abc123"}')
+INTEGRATION_ID=$(printf '%s' "$integration_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["integration"]["_id"])')
+
+oauth_app_response=$(curl -sf -X POST "${BASE_URL}/api/v1/oauth-apps.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"name":"specmatic-oauth-app","redirectUri":"https://example.com/callback","active":true}')
+OAUTH_APP_ID=$(printf '%s' "$oauth_app_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["application"]["_id"])')
+
+if [ -z "$INTEGRATION_ID" ] || [ -z "$OAUTH_APP_ID" ]; then
+  echo "Failed to seed integrations.yaml fixtures (integration/oauth app)" >&2
+  exit 1
+fi
+
+cat > "${EXAMPLES_DIR}/integrations/integrations-create.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.create",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "type": "webhook-outgoing", "name": "specmatic-create-$(date +%s)-$$", "enabled": true, "username": "admin", "channel": "#general", "scriptEnabled": false, "event": "sendMessage", "urls": ["https://example.com/webhook"] }
+  },
+  "http-response": { "status": 200, "body": { "integration": { "_id": "seed-integration-create", "type": "webhook-outgoing" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/integrations-get.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.get",
+    "method": "GET",
+    "query": { "integrationId": "${INTEGRATION_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "integration": { "_id": "${INTEGRATION_ID}", "type": "webhook-outgoing" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/integrations-history.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.history",
+    "method": "GET",
+    "query": { "id": "${INTEGRATION_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "history": [], "offset": 0, "items": 0, "total": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/integrations-list.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.list",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "integrations": [{ "_id": "${INTEGRATION_ID}", "type": "webhook-outgoing" }], "offset": 0, "items": 1, "total": 1, "success": true } }
+}
+EOF
+
+# Requires token in the request body itself, not just on the DB record --
+# see comment above.
+cat > "${EXAMPLES_DIR}/integrations/integrations-update.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.update",
+    "method": "PUT",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "integrationId": "${INTEGRATION_ID}", "type": "webhook-outgoing", "name": "specmatic-test-integration-updated", "enabled": true, "username": "admin", "channel": "#general", "scriptEnabled": false, "event": "sendMessage", "urls": ["https://example.com/webhook"], "token": "specmatic-webhook-token-abc123" }
+  },
+  "http-response": { "status": 200, "body": { "integration": { "_id": "${INTEGRATION_ID}", "type": "webhook-outgoing" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/webdav-getMyAccounts.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/webdav.getMyAccounts",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "accounts": [], "success": true } }
+}
+EOF
+
+# Real, reproducible behavior: removing a nonexistent webdav account is
+# NOT an error -- a real 200 with deletedCount: 0, confirmed live via
+# curl. No real webdav account exists to remove without a live WebDAV
+# server configured (out of scope), so this exercises the real "no-op
+# removal" path rather than a fabricated one.
+cat > "${EXAMPLES_DIR}/integrations/webdav-removeWebdavAccount.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/webdav.removeWebdavAccount",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "accountId": "nonexistent-account-id" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/oauth-apps-create.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/oauth-apps.create",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "name": "specmatic-create-$(date +%s)-$$", "redirectUri": "https://example.com/callback", "active": true }
+  },
+  "http-response": { "status": 200, "body": { "application": { "_id": "seed-oauth-create", "name": "specmatic-oauth-app" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/oauth-apps-get.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/oauth-apps.get",
+    "method": "GET",
+    "query": { "_id": "${OAUTH_APP_ID}" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "oauthApp": { "_id": "${OAUTH_APP_ID}", "name": "specmatic-oauth-app" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/oauth-apps-list.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/oauth-apps.list",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": { "status": 200, "body": { "oauthApps": [{ "_id": "${OAUTH_APP_ID}", "name": "specmatic-oauth-app" }], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/integrations/oauth-apps-update.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/oauth-apps.update",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "appId": "${OAUTH_APP_ID}", "name": "specmatic-oauth-app-updated", "redirectUri": "https://example.com/callback", "active": true }
+  },
+  "http-response": { "status": 200, "body": { "_id": "${OAUTH_APP_ID}", "name": "specmatic-oauth-app-updated", "success": true } }
+}
+EOF
+
+echo "Wrote integrations.yaml create/get/history/list/update/webdav/oauth-apps examples (integrationId: ${INTEGRATION_ID}, oauthAppId: ${OAUTH_APP_ID})."
+
+# integrations.remove / oauth-apps.delete need their OWN, separate
+# fixtures -- deleting INTEGRATION_ID/OAUTH_APP_ID here (the ones
+# get/history/list/update above reference) would leave those examples
+# pointing at already-deleted resources by the time Specmatic actually
+# runs its test suite (a later, separate step from this script). oauth-
+# apps.delete: a genuine, real spec-vs-app type mismatch -- the spec
+# declares {success: boolean} (an object) but the live app returns a bare
+# JSON boolean `true`, confirmed via curl. This example's body is the
+# spec-conformant shape for this file's own load-time type-check (same
+# reasoning as elsewhere); the real mismatch shows up as a genuine
+# finding when the live test runs, not fabricated here.
+integration_to_remove=$(curl -sf -X POST "${BASE_URL}/api/v1/integrations.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"type":"webhook-outgoing","name":"specmatic-test-integration-to-remove","enabled":true,"username":"admin","channel":"#general","scriptEnabled":false,"event":"sendMessage","urls":["https://example.com/webhook"],"token":"specmatic-webhook-token-remove"}')
+INTEGRATION_TO_REMOVE_ID=$(printf '%s' "$integration_to_remove" | python3 -c 'import json,sys; print(json.load(sys.stdin)["integration"]["_id"])')
+
+curl -sf -X POST "${BASE_URL}/api/v1/integrations.remove" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"integrationId\":\"${INTEGRATION_TO_REMOVE_ID}\",\"type\":\"webhook-outgoing\"}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/integrations/integrations-remove.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/integrations.remove",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "integrationId": "${INTEGRATION_TO_REMOVE_ID}", "type": "webhook-outgoing" }
+  },
+  "http-response": { "status": 200, "body": { "integration": { "_id": "${INTEGRATION_TO_REMOVE_ID}", "type": "webhook-outgoing" }, "success": true } }
+}
+EOF
+
+oauth_app_to_delete=$(curl -sf -X POST "${BASE_URL}/api/v1/oauth-apps.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"name":"specmatic-oauth-app-to-delete","redirectUri":"https://example.com/callback","active":true}')
+OAUTH_APP_TO_DELETE_ID=$(printf '%s' "$oauth_app_to_delete" | python3 -c 'import json,sys; print(json.load(sys.stdin)["application"]["_id"])')
+
+curl -sf -X POST "${BASE_URL}/api/v1/oauth-apps.delete" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"appId\":\"${OAUTH_APP_TO_DELETE_ID}\"}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/integrations/oauth-apps-delete.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/oauth-apps.delete",
+    "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "appId": "${OAUTH_APP_TO_DELETE_ID}" }
+  },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+echo "Wrote integrations.remove/oauth-apps.delete examples using dedicated, separate fixtures (integrationId: ${INTEGRATION_TO_REMOVE_ID}, oauthAppId: ${OAUTH_APP_TO_DELETE_ID})."

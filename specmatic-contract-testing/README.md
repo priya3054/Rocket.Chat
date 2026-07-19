@@ -777,8 +777,48 @@ requirements modeled as unconditional.
 `webdav.getMyAccounts`, `oauth-apps.list`, `oauth-apps.create`,
 `oauth-apps.delete`.
 
-**Not covered this pass** — `integrations.update`, `webdav.removeWebdavAccount`,
-`oauth-apps.update`/`get`. Genuinely untested.
+### 2026-07-19 — Real committed examples added for all 13 operations (was: spot-checked)
+
+Extended `regenerate-auth-examples.sh` to write real, live-verified
+external examples for every operation in this file, matching the
+same-day project-wide push for real coverage (see Step 4's re-measured
+number). New findings from this pass:
+
+- **`integrations.update` requires `token` in the *request body itself*,
+  not just on the stored integration record** — traced to
+  `apps/meteor/app/integrations/server/methods/outgoing/
+  updateOutgoingIntegration.ts:28-34`: it validates the incoming payload
+  (`validateOutgoingIntegration(_integration, userId)`), and throws
+  `error-invalid-token` if *that payload* lacks a token, even when the
+  integration being updated already has one in the database. A real,
+  non-obvious requirement, not documented in the spec's description text.
+- **Undocumented real fields, same category as the rest of this
+  project:** `integrations.get`'s `integration` object includes `token`
+  and `skipTranspile`, not declared in the schema; `oauth-apps.get`'s
+  `oauthApp` includes `_updatedBy`; `webdav.removeWebdavAccount`'s
+  response includes a `result` wrapper object. All logged, not fixed —
+  the app's behavior is correct, the spec is just narrower than reality.
+- **Genuine type mismatch, not just missing fields:** `oauth-apps.delete`
+  returns a bare JSON boolean `true`, but the spec declares the response
+  as an object (`{success: boolean}`) — confirmed live via curl. The
+  whole response body is the wrong JSON type, not merely missing/extra
+  properties.
+- **`webdav.removeWebdavAccount` on a nonexistent account is a real
+  200**, not an error (`{"result":{"acknowledged":true,"deletedCount":0},
+  "success":true}`) — no real WebDAV server is configured on this
+  instance (out of scope), so this exercises the real no-op-removal path
+  rather than a fabricated one.
+- **A real mistake caught during example-writing, not shipped**: initially
+  had the generation script call `integrations.remove`/`oauth-apps.delete`
+  directly on the *same* fixture IDs that `get`/`list`/`update` examples
+  reference, which deleted those resources before Specmatic's own test
+  run could use them. Fixed by giving `remove`/`delete` their own,
+  separate, dedicated fixtures.
+
+All 13 operations now have real committed examples (`specmatic/examples/
+integrations/`). Genuinely untested: nothing — every operation gets a
+real request/response round trip now, even where the result is an
+already-categorized accepted-drift finding rather than a clean pass.
 
 ### 2026-07-19 — Provider contract test: `marketplace-apps.yaml`
 
