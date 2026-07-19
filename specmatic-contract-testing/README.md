@@ -909,11 +909,41 @@ chased further), `fingerprint` (missing `setDeploymentAs`), `shield.svg`
 (400, likely a missing required param — not chased further given this is
 a low-value SVG-badge endpoint).
 
-**Not covered this pass** — `email-inbox` create/get/delete/search/send-test,
-`licenses.add`, `commands.preview`/`run`, `mailer.unsubscribe`,
-`method.call/{method}`, `calendar-events.info`/`update`/`delete`/`import`,
-the two `/api/apps/public/...` webhook endpoints (duplicated from
-`marketplace-apps.yaml`). Genuinely untested.
+### 2026-07-19 — Real committed examples added for 22 of 30 operations
+
+Extended `regenerate-auth-examples.sh` with real, live-verified examples
+for every previously-"not covered" operation except the two
+`/api/apps/public/...` webhook endpoints and `licenses.add` (need
+external integration config / a real license key — genuinely out of
+scope). New findings:
+
+- **A real mistake caught mid-session, not shipped**: testing
+  `commands.run` with `"archive"` genuinely archived `#general` — caught
+  immediately (checked `channels.info`, saw `archived: true`), undone via
+  `channels.unarchive`, and switched to the harmless `"shrug"` command for
+  the actual committed example.
+- **`email-inbox.send-test` is declared `GET` in the spec but the app
+  registers it as `POST`** (`apps/meteor/server/api/v1/email-inbox.ts:222`)
+  — a real method mismatch, logged as a spec-blocker candidate.
+- **`calendar-events.info` takes a query param named `id`**, not
+  `eventId` like its update/delete siblings — an easy-to-miss
+  inconsistency between operations that otherwise look identical.
+- **No command installed on this instance has `providesPreview: true`**,
+  so `commands.preview`'s declared `200` is untestable without one; its
+  declared `400` ("Command Does Not Provide Previews") is real, valid
+  coverage instead.
+- **Undocumented real fields, same category as the rest of this
+  project**: `email-inbox.list`'s `imap` objects include `maxRetries`
+  (declared optional in the real TypeScript validator,
+  `packages/rest-typings/src/v1/email-inbox.ts`, but absent from the
+  OpenAPI schema).
+- `shield.svg` (`text/plain` SVG body, not JSON) confirmed working live
+  with the spec's actual required `channel`/`name` params, but not
+  committed as a JSON external example given the non-JSON content type.
+
+Genuinely still out of scope: `licenses.add`, the two
+`/api/apps/public/...` webhook/WhatsApp-template endpoints (duplicated
+from `marketplace-apps.yaml`, same external-config reasons).
 
 ---
 

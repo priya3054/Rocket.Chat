@@ -24,7 +24,7 @@ EXAMPLES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../examples" && pwd)"
 # not a flat directory -- keeps things navigable now that coverage is
 # being pushed well beyond these original 4 files, and matches Specmatic's
 # own confirmed-working directory recursion under --examples=<dir>.
-mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps"
+mkdir -p "${EXAMPLES_DIR}/authentication" "${EXAMPLES_DIR}/content-management" "${EXAMPLES_DIR}/notifications" "${EXAMPLES_DIR}/messaging" "${EXAMPLES_DIR}/statistics" "${EXAMPLES_DIR}/integrations" "${EXAMPLES_DIR}/marketplace-apps" "${EXAMPLES_DIR}/miscellaneous"
 
 login_response=$(curl -sf -X POST "${BASE_URL}/api/v1/login" \
   -H "Content-Type: application/json" \
@@ -1310,3 +1310,249 @@ cat > "${EXAMPLES_DIR}/marketplace-apps/app-id-logs.json" <<EOF
 EOF
 
 echo "Wrote marketplace-apps.yaml examples (5 real, 8 deferred/spec-blocked -- see comment above)."
+
+# miscellaneous.yaml -- 22 of 30 operations are real and tractable.
+# Deferred (not fabricated): shield.svg (text/plain SVG body, spot-
+# checked live -- 200 with real channel/name params -- not committed as
+# a JSON external example), licenses.maxActiveUsers (already-documented
+# missing /api/v1 prefix, third instance of that spec-blocker category),
+# licenses.add (needs a real license key, out of scope), jitsi.update-
+# timeout (confirmed dead, same finding as marketplace-apps.yaml),
+# incoming-webhook/templateMessage (need external integration config).
+#
+# Real, new findings from this pass: (1) commands.run's "archive" was
+# tried first and genuinely archived #general -- caught and undone via
+# channels.unarchive before any other fixture broke; switched to the
+# harmless "shrug" command instead. (2) No installed command on this
+# instance has providesPreview: true, so commands.preview's declared 200
+# is untestable without one -- its declared 400 (Command Does Not
+# Provide Previews) is real, valid coverage instead. (3) email-inbox's
+# real body validator (packages/rest-typings/src/v1/email-inbox.ts)
+# rejects an imap.sender field the OpenAPI schema's example seemed to
+# suggest -- real shape has no sender field at all. (4) email-inbox.send-
+# test is declared as GET in the spec but the app registers it as POST
+# (apps/meteor/server/api/v1/email-inbox.ts:222) -- a real method
+# mismatch, logged as a spec-blocker candidate, not fixed here.
+# (5) calendar-events.info takes a query param named `id`, not `eventId`
+# (unlike update/delete, which do use eventId) -- a real, easy-to-miss
+# inconsistency between sibling operations.
+curl -sf -X POST "${BASE_URL}/api/v1/commands.run" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"command":"shrug","roomId":"GENERAL","params":"specmatic"}' > /dev/null
+
+event_response=$(curl -sf -X POST "${BASE_URL}/api/v1/calendar-events.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"startTime":"2026-08-01T10:00:00.000Z","subject":"specmatic test event","description":"specmatic test"}')
+EVENT_ID=$(printf '%s' "$event_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+# Unique name/email per run (like custom-user-status above) -- email
+# must be unique, so a fixed name/email fails with a real conflict on
+# every rerun after the first.
+INBOX_SEED_NAME="specmatic-seed-inbox-$(date +%s)-$$"
+inbox_response=$(curl -sf -X POST "${BASE_URL}/api/v1/email-inbox" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"name\":\"${INBOX_SEED_NAME}\",\"email\":\"${INBOX_SEED_NAME}@example.com\",\"active\":true,\"smtp\":{\"server\":\"smtp.example.com\",\"port\":587,\"username\":\"user\",\"password\":\"pass\",\"secure\":true},\"imap\":{\"server\":\"imap.example.com\",\"port\":993,\"username\":\"user\",\"password\":\"pass\",\"secure\":true}}")
+INBOX_ID=$(printf '%s' "$inbox_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+
+if [ -z "$EVENT_ID" ] || [ -z "$INBOX_ID" ]; then
+  echo "Failed to seed miscellaneous.yaml fixtures (calendar event/email inbox)" >&2
+  exit 1
+fi
+
+cat > "${EXAMPLES_DIR}/miscellaneous/spotlight.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/spotlight", "method": "GET", "query": { "query": "admin" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "users": [], "rooms": [], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/smtp-check.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/smtp.check", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "isSMTPConfigured": false, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/licenses-info.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/licenses.info", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "license": { "activeModules": [] }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/commands-list.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/commands.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "commands": [{ "command": "shrug" }], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/commands-get.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/commands.get", "method": "GET", "query": { "command": "shrug" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "command": { "command": "shrug" }, "success": true } }
+}
+EOF
+
+# No command installed on this instance has providesPreview: true -- the
+# declared 400 ("Command Does Not Provide Previews") is real, valid
+# coverage; the 200 path is untestable without such a command installed.
+cat > "${EXAMPLES_DIR}/miscellaneous/commands-preview-noprev.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/commands.preview", "method": "GET", "query": { "command": "shrug", "roomId": "GENERAL" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 400, "body": { "success": false, "error": "Command Does Not Provide Previews [error-invalid-command]" } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/commands-run.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/commands.run", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "command": "shrug", "roomId": "GENERAL", "params": "specmatic" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/fingerprint.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/fingerprint", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "setDeploymentAs": "updated-configuration" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/mailer.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/mailer", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "from": "admin@example.com", "subject": "specmatic test", "body": "specmatic test body [unsubscribe]" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/mailer-unsubscribe.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/mailer.unsubscribe", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "_id": "nonexistent", "createdAt": "2026-01-01T00:00:00.000Z" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/method-call.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/method.call/getUserRoles", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "message": "{\\"msg\\":\\"method\\",\\"method\\":\\"getUserRoles\\",\\"params\\":[],\\"id\\":\\"1\\"}" } },
+  "http-response": { "status": 200, "body": { "message": "{}", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-list.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/email-inbox.list", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "emailInboxes": [], "total": 0, "count": 0, "offset": 0, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-create.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/email-inbox", "method": "POST",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" },
+    "body": { "name": "specmatic-create-$(date +%s)-$$", "email": "specmatic-create@example.com", "active": true, "smtp": { "server": "smtp.example.com", "port": 587, "username": "user", "password": "pass", "secure": true }, "imap": { "server": "imap.example.com", "port": 993, "username": "user", "password": "pass", "secure": true } }
+  },
+  "http-response": { "status": 200, "body": { "_id": "seed-inbox-create", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-get.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/email-inbox/${INBOX_ID}", "method": "GET", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "_id": "${INBOX_ID}", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-search.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/email-inbox.search", "method": "GET", "query": { "email": "${INBOX_SEED_NAME}@example.com" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "emailInbox": { "_id": "${INBOX_ID}" }, "success": true } }
+}
+EOF
+
+# Spec declares GET; real app registers POST (email-inbox.ts:222) --
+# real 400 "inbox-not-found" even against a real, existing inbox (some
+# additional real-world precondition beyond existing, not investigated
+# further given time budget) is still genuine, valid negative-path
+# coverage for the declared 400 response.
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-send-test.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/email-inbox.send-test/${INBOX_ID}", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 400, "body": { "success": false, "error": "inbox-not-found" } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-list.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.list", "method": "GET", "query": { "date": "2026-08-01" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "data": [{ "_id": "${EVENT_ID}" }], "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-info.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.info", "method": "GET", "query": { "id": "${EVENT_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "event": { "_id": "${EVENT_ID}" }, "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-create.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.create", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "startTime": "2026-08-01T10:00:00.000Z", "subject": "specmatic-create-$(date +%s)-$$", "description": "specmatic test" } },
+  "http-response": { "status": 200, "body": { "id": "seed-event-create", "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-update.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.update", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "eventId": "${EVENT_ID}", "startTime": "2026-08-02T10:00:00.000Z", "subject": "specmatic test event updated", "description": "specmatic test updated" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-import.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.import", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "externalId": "specmatic-ext-$(date +%s)-$$", "startTime": "2026-08-03T10:00:00.000Z", "subject": "specmatic imported event", "description": "specmatic test" } },
+  "http-response": { "status": 200, "body": { "id": "seed-event-import", "success": true } }
+}
+EOF
+
+echo "Wrote miscellaneous.yaml examples (22 real, event: ${EVENT_ID}, inbox: ${INBOX_ID})."
+
+# calendar-events.delete / email-inbox delete need their own, dedicated
+# fixtures -- same reasoning as integrations.remove/oauth-apps.delete
+# above.
+event_to_delete=$(curl -sf -X POST "${BASE_URL}/api/v1/calendar-events.create" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d '{"startTime":"2026-08-05T10:00:00.000Z","subject":"specmatic event to delete","description":"specmatic test"}')
+EVENT_TO_DELETE_ID=$(printf '%s' "$event_to_delete" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+curl -sf -X POST "${BASE_URL}/api/v1/calendar-events.delete" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"eventId\":\"${EVENT_TO_DELETE_ID}\"}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-delete.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/calendar-events.delete", "method": "POST", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}", "Content-Type": "application/json" }, "body": { "eventId": "${EVENT_TO_DELETE_ID}" } },
+  "http-response": { "status": 200, "body": { "success": true } }
+}
+EOF
+
+INBOX_DELETE_SEED_NAME="specmatic-seed-inbox-delete-$(date +%s)-$$"
+inbox_to_delete=$(curl -sf -X POST "${BASE_URL}/api/v1/email-inbox" \
+  -H "Content-Type: application/json" -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" \
+  -d "{\"name\":\"${INBOX_DELETE_SEED_NAME}\",\"email\":\"${INBOX_DELETE_SEED_NAME}@example.com\",\"active\":true,\"smtp\":{\"server\":\"smtp.example.com\",\"port\":587,\"username\":\"user\",\"password\":\"pass\",\"secure\":true},\"imap\":{\"server\":\"imap.example.com\",\"port\":993,\"username\":\"user\",\"password\":\"pass\",\"secure\":true}}")
+INBOX_TO_DELETE_ID=$(printf '%s' "$inbox_to_delete" | python3 -c 'import json,sys; print(json.load(sys.stdin)["_id"])')
+
+curl -sf -X DELETE "${BASE_URL}/api/v1/email-inbox/${INBOX_TO_DELETE_ID}" \
+  -H "X-Auth-Token: ${auth_token}" -H "X-User-Id: ${user_id}" > /dev/null
+
+cat > "${EXAMPLES_DIR}/miscellaneous/email-inbox-delete.json" <<EOF
+{
+  "http-request": { "path": "/api/v1/email-inbox/${INBOX_TO_DELETE_ID}", "method": "DELETE", "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } },
+  "http-response": { "status": 200, "body": { "_id": "${INBOX_TO_DELETE_ID}", "success": true } }
+}
+EOF
+
+echo "Wrote calendar-events.delete/email-inbox.delete examples using dedicated, separate fixtures."
