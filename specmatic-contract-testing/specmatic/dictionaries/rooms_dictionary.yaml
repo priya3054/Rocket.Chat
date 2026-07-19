@@ -1,0 +1,45 @@
+# Specmatic dictionary for rooms.yaml, auto-discovered by naming convention
+# (<spec-basename>_dictionary.yaml sitting in the SAME directory as the spec
+# -- confirmed empirically this session, no --config/CLI wiring needed,
+# works for both `mock` and `test`/resiliency runs). This file lives here,
+# not inside contracts/ (the read-only, pinned spec submodule), and is
+# bind-mounted alongside rooms.yaml at the same in-container path in
+# compose.test.yml -- the submodule itself is never written to.
+#
+# Keys must be the exact name of a named OpenAPI schema component
+# (components.schemas.<Name>) -- verified live that a flat/unscoped key
+# (e.g. a bare `name:` or `X-Auth-Token:` at the top level) is silently
+# ignored, never substituted. rooms.yaml is the only one of the 12 spec
+# files with any named schema components at all (Attachment, Subscription
+# -- the other 11 files declare zero), so this is the only spec a
+# dictionary can meaningfully affect; see README Step 5 for the full
+# investigation and evidence.
+Subscription:
+  name:
+    - general
+    - support
+    - engineering
+  fname:
+    - General
+    - Support
+    - Engineering
+  t:
+    - c
+    - p
+    - d
+    - l
+
+Attachment:
+  title:
+    - screenshot.png
+    - report.pdf
+    - recording.mp4
+  title_link:
+    - /file-upload/PNTaE9SBQasdpAwk2/screenshot.png
+  type:
+    - file
+  image_type:
+    - image/jpeg
+    - image/png
+  description:
+    - Shared via Rocket.Chat

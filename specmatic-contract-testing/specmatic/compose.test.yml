@@ -23,7 +23,33 @@ services:
     image: specmatic/specmatic:2.50.0
     profiles: ["mock"]
     volumes:
-      - ../contracts:/usr/src/app/specs:ro
+      # Individual per-file mounts, not a single directory mount, so the
+      # dictionary file below can sit in the same in-container directory
+      # (Specmatic's dictionary auto-discovery is directory-co-location
+      # based) without nesting a mount inside contracts/'s existing
+      # read-only directory mount -- verified live that Docker refuses to
+      # create a mountpoint for a nested file bind-mount when the parent
+      # directory mount is :ro ("read-only file system" at container
+      # create time). contracts/ (the pinned, read-only spec submodule)
+      # is still never written to; each spec file is still mounted :ro.
+      - ../contracts/authentication.yaml:/usr/src/app/specs/authentication.yaml:ro
+      - ../contracts/content-management.yaml:/usr/src/app/specs/content-management.yaml:ro
+      - ../contracts/integrations.yaml:/usr/src/app/specs/integrations.yaml:ro
+      - ../contracts/marketplace-apps.yaml:/usr/src/app/specs/marketplace-apps.yaml:ro
+      - ../contracts/messaging.yaml:/usr/src/app/specs/messaging.yaml:ro
+      - ../contracts/miscellaneous.yaml:/usr/src/app/specs/miscellaneous.yaml:ro
+      - ../contracts/notifications.yaml:/usr/src/app/specs/notifications.yaml:ro
+      - ../contracts/omnichannel.yaml:/usr/src/app/specs/omnichannel.yaml:ro
+      - ../contracts/rooms.yaml:/usr/src/app/specs/rooms.yaml:ro
+      - ../contracts/settings.yaml:/usr/src/app/specs/settings.yaml:ro
+      - ../contracts/statistics.yaml:/usr/src/app/specs/statistics.yaml:ro
+      - ../contracts/user-management.yaml:/usr/src/app/specs/user-management.yaml:ro
+      # rooms.yaml is the only one of the 12 specs with any named schema
+      # components (Attachment, Subscription) for a dictionary to attach
+      # to (verified live, see README Step 5) -- auto-discovered by
+      # Specmatic via the rooms_dictionary.yaml name sitting next to
+      # rooms.yaml, no CLI/config wiring needed.
+      - ../specmatic/dictionaries/rooms_dictionary.yaml:/usr/src/app/specs/rooms_dictionary.yaml:ro
     ports:
       - "9000:9000"
     command:
@@ -178,9 +204,25 @@ services:
     image: specmatic/specmatic:2.50.0
     profiles: ["test"]
     volumes:
-      - ../contracts:/usr/src/app/specs:ro
+      # Individual per-file mounts (not a directory mount) so the
+      # dictionary below can co-locate with rooms.yaml without nesting a
+      # mount inside a :ro directory mount -- see specmatic-mock for the
+      # full explanation.
+      - ../contracts/authentication.yaml:/usr/src/app/specs/authentication.yaml:ro
+      - ../contracts/content-management.yaml:/usr/src/app/specs/content-management.yaml:ro
+      - ../contracts/integrations.yaml:/usr/src/app/specs/integrations.yaml:ro
+      - ../contracts/marketplace-apps.yaml:/usr/src/app/specs/marketplace-apps.yaml:ro
+      - ../contracts/messaging.yaml:/usr/src/app/specs/messaging.yaml:ro
+      - ../contracts/miscellaneous.yaml:/usr/src/app/specs/miscellaneous.yaml:ro
+      - ../contracts/notifications.yaml:/usr/src/app/specs/notifications.yaml:ro
+      - ../contracts/omnichannel.yaml:/usr/src/app/specs/omnichannel.yaml:ro
+      - ../contracts/rooms.yaml:/usr/src/app/specs/rooms.yaml:ro
+      - ../contracts/settings.yaml:/usr/src/app/specs/settings.yaml:ro
+      - ../contracts/statistics.yaml:/usr/src/app/specs/statistics.yaml:ro
+      - ../contracts/user-management.yaml:/usr/src/app/specs/user-management.yaml:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
       - ../specmatic/overlays:/usr/src/app/overlays:ro
+      - ../specmatic/dictionaries/rooms_dictionary.yaml:/usr/src/app/specs/rooms_dictionary.yaml:ro
       - ../specmatic/reports/all:/usr/src/app/reports
     depends_on:
       - rocketchat
@@ -233,9 +275,25 @@ services:
     image: specmatic/specmatic:2.50.0
     profiles: ["test"]
     volumes:
-      - ../contracts:/usr/src/app/specs:ro
+      # Individual per-file mounts (not a directory mount) so the
+      # dictionary below can co-locate with rooms.yaml without nesting a
+      # mount inside a :ro directory mount -- see specmatic-mock for the
+      # full explanation.
+      - ../contracts/authentication.yaml:/usr/src/app/specs/authentication.yaml:ro
+      - ../contracts/content-management.yaml:/usr/src/app/specs/content-management.yaml:ro
+      - ../contracts/integrations.yaml:/usr/src/app/specs/integrations.yaml:ro
+      - ../contracts/marketplace-apps.yaml:/usr/src/app/specs/marketplace-apps.yaml:ro
+      - ../contracts/messaging.yaml:/usr/src/app/specs/messaging.yaml:ro
+      - ../contracts/miscellaneous.yaml:/usr/src/app/specs/miscellaneous.yaml:ro
+      - ../contracts/notifications.yaml:/usr/src/app/specs/notifications.yaml:ro
+      - ../contracts/omnichannel.yaml:/usr/src/app/specs/omnichannel.yaml:ro
+      - ../contracts/rooms.yaml:/usr/src/app/specs/rooms.yaml:ro
+      - ../contracts/settings.yaml:/usr/src/app/specs/settings.yaml:ro
+      - ../contracts/statistics.yaml:/usr/src/app/specs/statistics.yaml:ro
+      - ../contracts/user-management.yaml:/usr/src/app/specs/user-management.yaml:ro
       - ../specmatic/specmatic_resiliency.yaml:/usr/src/app/specmatic.yaml:ro
       - ../specmatic/overlays:/usr/src/app/overlays:ro
+      - ../specmatic/dictionaries/rooms_dictionary.yaml:/usr/src/app/specs/rooms_dictionary.yaml:ro
       - ../specmatic/reports/resiliency:/usr/src/app/reports
     depends_on:
       - rocketchat

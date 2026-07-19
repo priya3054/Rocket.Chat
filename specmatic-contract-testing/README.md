@@ -489,6 +489,26 @@ above, `channels.anonymousread` config-gated on this instance, room-image
 uploads). Not filtered, not claimed as verified — genuinely untested,
 logged here so the gap is visible rather than implied to be covered.
 
+**Two more inline-example defects found (`specmatic examples validate
+--examples-to-validate=INLINE`, run against the whole 12-spec set):**
+`groups.removeModerator` (`rooms.yaml:11782`) and `groups.removeOwner`
+(`rooms.yaml:11855`) each declare their required `Auth-Token`/`UserId`
+header parameters via `$ref` (lines 11799–11800 and 11872–11873), but
+neither operation's own inline "Success" request example
+(`rooms.yaml:11822-11825` and `rooms.yaml:11895-11898`) pairs a header
+example value with it — so Specmatic can't validate a complete
+request/response round trip for either "Success" scenario:
+```
+R2001: Missing required property
+Specification expected mandatory header "X-Auth-Token"/"X-User-Id" to be
+present but was missing from the example
+```
+Same category as this project's other inline-example findings (an
+objective defect in the canonical, frozen spec — logged, never patched
+here). Confirms, at the example level, the same generic pattern already
+covered by the exhaustive `channels.*` pass above: `removeModerator`/
+`removeOwner` are otherwise clean.
+
 ### 2026-07-19 — Provider contract test: `omnichannel.yaml` (spot-checked)
 
 165 operations (`livechat.*` ~124, `omnichannel.*` ~13, `canned-responses`
@@ -1110,6 +1130,53 @@ had to be installed fresh for this — see this session's history for the
 Node-version/engine-check detour that required) — zero new errors
 introduced, only 2 pre-existing unrelated errors in a broken third-party
 `@rocket.chat/storybook-config` type stub file.
+
+### Specmatic dictionary — real, verified, deliberately scoped to `rooms.yaml`
+
+Added a [Specmatic dictionary](https://github.com/specmatic/labs/blob/main/dictionary/README.md)
+(`specmatic/dictionaries/rooms_dictionary.yaml`) so generated mock
+responses and resiliency-fuzzed data use domain-realistic values instead
+of random schema-valid noise — every mechanism claim below was verified
+live, not assumed, after several genuinely failed attempts:
+
+- **Auto-discovery confirmed:** a `<spec-basename>_dictionary.yaml` file
+  sitting in the same in-container directory as its spec is picked up by
+  Specmatic automatically — no `--config`/CLI flag needed, and confirmed
+  working alongside both `--examples` (contract-test) and `--config`
+  (resiliency), so it introduces no new conflict with the constraints
+  already documented above.
+- **Keying by flat field/parameter name does not work** — tried both a
+  body field (`username`) and a shared header parameter name
+  (`X-Auth-Token`) at the top level; the dictionary file loaded (log
+  confirms it) but generated values stayed random either way. Only
+  keying by the exact name of a **named OpenAPI schema component**
+  (`components.schemas.<Name>`) actually substitutes values — verified
+  by keying under `Subscription` and observing the mocked
+  `subscriptions.get` response return the dictionary's exact values
+  (`name`/`fname`/`t`) across every generated item, live, through the
+  real `specmatic-mock` compose service.
+- **`rooms.yaml` is the only spec file this can meaningfully apply to.**
+  Checked all 12 spec files for named schema components: 10 have zero,
+  `rooms.yaml` has exactly two (`Attachment`, `Subscription`). A
+  dictionary file for any of the other 11 would load without error but
+  have nothing to attach to — so one wasn't added for them, rather than
+  shipping inert files that look like coverage but do nothing.
+- **A real Docker mounting issue, found and fixed:** the dictionary file
+  can't be bind-mounted into a path nested inside the existing
+  `../contracts:/usr/src/app/specs:ro` directory mount — Docker refuses
+  to create a mountpoint for a nested bind when the parent directory
+  mount is read-only ("read-only file system" at container create time).
+  Fixed by mounting each of the 12 spec files individually instead of the
+  whole directory, so the dictionary file can sit alongside them as a
+  sibling mount rather than nested inside another mount. `contracts/`
+  (the pinned, read-only spec submodule) is still never written to —
+  every file is still mounted `:ro`.
+- **Verified end-to-end through the real compose services**, not just an
+  ad hoc test: `specmatic-mock` (`GET /subscriptions.get` returned
+  `name: "support"`, `fname: "Engineering"`, `t: "l"` — the dictionary's
+  values, not random strings), `specmatic-resiliency-test-all`, and
+  `specmatic-contract-test-all` (dictionary coexisting cleanly with both
+  `--examples` and the `media-calls.state` overlay in the same run).
 
 ## Step 6: CI (GitHub Actions, no PR)
 
