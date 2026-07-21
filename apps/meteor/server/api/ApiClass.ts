@@ -1165,7 +1165,7 @@ export class APIClass<TBasePath extends string = '', TOperations extends Record<
 				},
 			};
 
-			return response;
+			return self.success(response);
 		};
 
 		/*

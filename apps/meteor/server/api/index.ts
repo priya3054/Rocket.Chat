@@ -48,5 +48,6 @@ import './v1/uploads';
 
 // This has to come last so all endpoints are registered before generating the OpenAPI documentation
 import './default/openApi';
+import './default/actuatorMappings';
 
 export { API, defaultRateLimiterOptions } from './api';

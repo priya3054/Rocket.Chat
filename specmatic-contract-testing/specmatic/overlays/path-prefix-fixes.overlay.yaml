@@ -1,0 +1,712 @@
+overlay: 1.0.0
+info:
+  title: Correct missing API path prefixes, for testing purposes only
+  version: "1.0"
+# Five independent spec path-prefix defects, all fixed here the same way: add the
+# correctly-prefixed path (full operation copied verbatim from the original), then remove the
+# undecorated one. Applied in-memory by Specmatic at test time only (--overlay-file) -- the base
+# contracts submodule is never edited, forked, or committed to. See
+# specmatic-contract-testing/README.md for all findings and their live verification. All real
+# defects still need to be raised with the spec upstream.
+# IMPORTANT: all five path additions below live under ONE single action with ONE
+# "update:" map (five sibling keys), not five separate actions each with their own
+# "- target: '$.paths' / update:" block. Confirmed live: when each fix was its own
+# separate action, only the LAST such action's addition actually survived --
+# Specmatic's overlay engine replaces the prior "$.paths" update wholesale on each
+# subsequent action targeting the same JSONPath rather than deep-merging across
+# actions. Splitting these into five actions (as this file originally did, one per
+# fix, added incrementally over several sessions) silently broke every earlier one
+# the moment a later one was added -- found only by testing each fix explicitly full
+# 12-spec run and seeing four of five vanish with no error. One action, five keys,
+# is the correct, verified-working shape. The five "remove" actions below stay
+# separate since each targets a distinct, specific JSONPath and those do not
+# conflict with each other.
+# ALSO IMPORTANT: every parameter/response below is inlined, never `$ref`'d against
+# a spec's own `#/components/...` section. Confirmed live: because this one overlay
+# file gets applied across all 12 specs in a single `specmatic test` invocation, an
+# added operation's `$ref` only resolves inside whichever spec file originally
+# declared that component name -- grafted into an unrelated spec (which may not
+# declare a component by that exact name, or may resolve it to something with a
+# different shape), the `$ref` silently fails and Specmatic reports the header/
+# response as "not in the specification", aborting the whole suite with a load
+# error rather than just failing the one operation. Inlining avoids this entirely.
+actions:
+  - target: "$.paths"
+    update:
+      # Fix 1: settings.yaml declares this operation at /media-calls.state (no /api/v1 prefix),
+      # unlike every other operation in the spec. The real endpoint lives at
+      # /api/v1/media-calls.state -- verified live: the undecorated path just falls through to the
+      # SPA's HTML shell (200, wrong content-type/body), while the prefixed path returns real JSON.
+      /api/v1/media-calls.state:
+        get:
+          tags:
+            - Media Calls
+          summary: Get Current Media Call State
+          description: |
+            Returns every media call the authenticated user is part of and that has
+            not yet ended. Each entry reflects the call's latest
+            server-side state — `ringing`, `active`, etc. It also includes the
+            caller, callee, supported features, and lifecycle timestamps.
+          operationId: post-api-v1-get-media-calls.state
+          parameters:
+            - name: X-User-Id
+              in: header
+              required: true
+              schema:
+                type: string
+              example: CkCPNctrgCDfmWLqC
+              description: The user ID.
+            - name: X-Auth-Token
+              in: header
+              required: true
+              schema:
+                type: string
+              example: 1Dd4iN_ClKn5jl-xPC36snQ4s9Zd5GZnXCQuCNSKcVE
+              description: The authentication token.
+          responses:
+            "200":
+              description: The list of in-flight calls for the authenticated user.
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      calls:
+                        type: array
+                        description: All in-flight calls the authenticated user participates in.
+                        items:
+                          type: object
+                          properties:
+                            _id:
+                              type: string
+                              format: uuid
+                              description: Unique identifier of the call.
+                              example: 9f44ec94-2046-4fac-976b-fa8b0e022b08
+                            service:
+                              type: string
+                              enum: [webrtc]
+                              description: Underlying media service powering the call.
+                              example: webrtc
+                            kind:
+                              type: string
+                              enum: [direct]
+                              description: Call topology.
+                              example: direct
+                            state:
+                              type: string
+                              enum: [ringing, active]
+                              description: |
+                                Current lifecycle state of the call.
+                                - `ringing` : invitation sent, callee has not yet answered.
+                                - `active` : call accepted and media is flowing.
+                              example: ringing
+                            createdBy:
+                              type: object
+                              description: The actor who created the call.
+                              properties:
+                                type:
+                                  type: string
+                                  example: user
+                                id:
+                                  type: string
+                                  description: Rocket.Chat user id.
+                                  example: aEGCdnFoBFCFNdiyX
+                                contractId:
+                                  type: string
+                                  format: uuid
+                                  description: Device/session contract id registered with the media-call service.
+                                  example: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                            createdAt:
+                              type: string
+                              format: date-time
+                              description: When the call record was created on the server.
+                              example: "2026-04-30T13:30:53.165Z"
+                            caller:
+                              type: object
+                              description: The party initiating the call. Always carries `contractId`.
+                              properties:
+                                type:
+                                  type: string
+                                  example: user
+                                id:
+                                  type: string
+                                  example: aEGCdnFoBFCFNdiyX
+                                contractId:
+                                  type: string
+                                  example: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                                displayName:
+                                  type: string
+                                  example: Funke Olasupo
+                                username:
+                                  type: string
+                                  example: funke.olasupo
+                            callee:
+                              type: object
+                              description: |
+                                The party being called. `contractId` is omitted while
+                                the call is `ringing` (no device has answered yet)
+                                and populated once accepted.
+                              properties:
+                                type:
+                                  type: string
+                                  example: user
+                                id:
+                                  type: string
+                                  example: iaZWAXecuCuBx4FnX
+                                contractId:
+                                  type: string
+                                  description: Set once the call is accepted.
+                                  example: 7488b84e-e096-46fb-8d62-1e6e3db479c9
+                                displayName:
+                                  type: string
+                                  example: Agent1
+                                username:
+                                  type: string
+                                  example: agent1
+                            expiresAt:
+                              type: string
+                              description: When the current state will expire if no further activity occurs.
+                              example: "2026-04-30T13:33:12.993Z"
+                            uids:
+                              type: array
+                              description: User IDs of every participant in the call.
+                              items:
+                                type: string
+                              example:
+                                - aEGCdnFoBFCFNdiyX
+                                - iaZWAXecuCuBx4FnX
+                            ended:
+                              type: boolean
+                              description: Always `false` for entries returned by this endpoint.
+                              example: false
+                            callerRequestedId:
+                              type: string
+                              description: Client-supplied correlation id for the call request.
+                              example: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4-38b61a15-8c41-4ee4-be75-977c48cd94ea
+                            features:
+                              type: array
+                              description: Feature flags negotiated for this call.
+                              items:
+                                type: string
+                              example: [audio, screen-share, transfer, hold]
+                            _updatedAt:
+                              type: string
+                              description: When the call record was last updated.
+                              example: "2026-04-30T13:31:12.993Z"
+                            acceptedAt:
+                              type: string
+                              description: Set once the callee accepts. Absent while ringing.
+                              example: "2026-04-30T13:31:10.070Z"
+                            activatedAt:
+                              type: string
+                              description: Set once media becomes active. Absent while ringing.
+                              example: "2026-04-30T13:31:12.698Z"
+                      success:
+                        type: boolean
+                        example: true
+                  examples:
+                    ringing:
+                      summary: Outbound call is still ringing
+                      value:
+                        calls:
+                          - _id: 9f44ec94-2046-4fac-976b-fa8b0e022b08
+                            service: webrtc
+                            kind: direct
+                            state: ringing
+                            createdBy:
+                              type: user
+                              id: aEGCdnFoBFCFNdiyX
+                              contractId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                            createdAt: "2026-04-30T13:30:53.165Z"
+                            caller:
+                              type: user
+                              id: aEGCdnFoBFCFNdiyX
+                              contractId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                              displayName: Funke Olasupo
+                              username: funke.olasupo
+                            callee:
+                              type: user
+                              id: iaZWAXecuCuBx4FnX
+                              displayName: Agent1
+                              username: agent1
+                            expiresAt: "2026-04-30T13:33:02.878Z"
+                            uids: [aEGCdnFoBFCFNdiyX, iaZWAXecuCuBx4FnX]
+                            ended: false
+                            callerRequestedId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4-38b61a15-8c41-4ee4-be75-977c48cd94ea
+                            features: [audio, screen-share, transfer, hold]
+                            _updatedAt: "2026-04-30T13:31:02.878Z"
+                        success: true
+                    active:
+                      summary: Call has been picked up and is active
+                      value:
+                        calls:
+                          - _id: 9f44ec94-2046-4fac-976b-fa8b0e022b08
+                            service: webrtc
+                            kind: direct
+                            state: active
+                            createdBy:
+                              type: user
+                              id: aEGCdnFoBFCFNdiyX
+                              contractId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                            createdAt: "2026-04-30T13:30:53.165Z"
+                            caller:
+                              type: user
+                              id: aEGCdnFoBFCFNdiyX
+                              contractId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4
+                              displayName: Funke Olasupo
+                              username: funke.olasupo
+                            callee:
+                              type: user
+                              id: iaZWAXecuCuBx4FnX
+                              contractId: 7488b84e-e096-46fb-8d62-1e6e3db479c9
+                              displayName: Agent1
+                              username: agent1
+                            expiresAt: "2026-04-30T13:33:12.993Z"
+                            uids: [aEGCdnFoBFCFNdiyX, iaZWAXecuCuBx4FnX]
+                            ended: false
+                            callerRequestedId: 7b96e74d-1e01-412a-8bcb-145db1bc9ac4-38b61a15-8c41-4ee4-be75-977c48cd94ea
+                            features: [audio, screen-share, transfer, hold]
+                            _updatedAt: "2026-04-30T13:31:12.993Z"
+                            acceptedAt: "2026-04-30T13:31:10.070Z"
+                            activatedAt: "2026-04-30T13:31:12.698Z"
+                        success: true
+                    empty:
+                      summary: User has no in-flight calls
+                      value:
+                        calls: []
+                        success: true
+            '401':
+              description: Unauthorized
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      message:
+                        type: string
+
+      # Fix 2: marketplace-apps.yaml declares this operation at /app/{id}/logs, unlike every other
+      # operation in the same file, which all use the /api/apps/... prefix. The real route
+      # (apps/meteor/ee/server/apps/communication/rest.ts: APIClass<'/apps'>, version: 'apps',
+      # route ':id/logs') lives at /api/apps/{id}/logs -- verified live: the undecorated path falls
+      # through to the SPA's HTML shell (text/html, not JSON), while the prefixed path returns a
+      # real JSON response, no Enterprise license required.
+      /api/apps/{id}/logs:
+        get:
+          summary: Get an App's Logs
+          tags:
+            - Manage Apps
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      offset:
+                        type: integer
+                      logs:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            _id:
+                              type: string
+                            appId:
+                              type: string
+                            method:
+                              type: string
+                            entries:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  caller:
+                                    type: string
+                                  severity:
+                                    type: string
+                                  method:
+                                    type: string
+                                  timestamp:
+                                    type: string
+                                  args:
+                                    type: array
+                                    items:
+                                      type: string
+                            startTime:
+                              type: string
+                            endTime:
+                              type: string
+                            totalTime:
+                              type: integer
+                            _createdAt:
+                              type: string
+                            instanceId:
+                              type: string
+                            _updatedAt:
+                              type: string
+                      count:
+                        type: integer
+                      total:
+                        type: integer
+                      success:
+                        type: boolean
+                  examples:
+                    App Log:
+                      value:
+                        offset: 0
+                        logs:
+                          - _id: 68341684d387e3d7509267f6
+                            appId: 30d2e4bf-2402-4197-b844-e7082b07dc65
+                            method: 'scheduler:registration.auto.renew.scheduler'
+                            entries:
+                              - caller: anonymous OR constructor -> handleScheduler
+                                severity: debug
+                                method: 'scheduler:registration.auto.renew.scheduler'
+                                timestamp: '2025-05-26T07:21:40.283Z'
+                                args:
+                                  - Job processor registration.auto.renew.scheduler is being executed...
+                            startTime: '2025-05-26T07:21:40.283Z'
+                            endTime: '2025-05-26T07:21:40.295Z'
+                            totalTime: 12
+                            _createdAt: '2025-05-26T07:21:40.295Z'
+                            instanceId: ad219c7b-84a5-4077-9ede-f6f9d7c4d3bd
+                            _updatedAt: '2025-05-26T07:21:40.296Z'
+                        count: 1
+                        total: 3916
+                        success: true
+            '400':
+              description: Forbidden
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                      error:
+                        type: string
+            '401':
+              description: Unauthorized
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      message:
+                        type: string
+            '404':
+              description: Not Found
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                      error:
+                        type: string
+                  examples:
+                    App not found:
+                      value:
+                        success: false
+                        error: 'No App found by the id of: :id'
+          operationId: 'get-app-:id-logs'
+          description: |-
+            Use this endpoint to get a specific app's logs for your workspace.
+          parameters:
+            - name: X-Auth-Token
+              in: header
+              description: The `authToken` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: RScctEHSmLGZGywfIhWyRpyofhKOiMoUIpimhvheU3f
+            - name: X-User-Id
+              in: header
+              description: The `userId` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: rbAXPnMktTFbNpwtJ
+            - schema:
+                type: string
+                example: fc96e832-5472-49e4-aace-1521a7ebeaa6
+              name: id
+              in: path
+              required: true
+              description: Enter the app ID for which you want to view the logs results.
+            - name: method
+              in: query
+              required: false
+              schema:
+                type: string
+                example: 'app:construct'
+              description: An app lifecycle method to filter logs by.
+            - name: logLevel
+              in: query
+              required: false
+              schema:
+                type: string
+                example: '1'
+              description: '0 for errors, 1 for errors and information, 2 for errors, information, and debugging details.'
+            - name: startDate
+              in: query
+              required: false
+              schema:
+                type: string
+                example: '2025-05-25T06:06:45.954Z'
+              description: Start date (ISO string) from which you want the logs results.
+            - name: endDate
+              in: query
+              required: false
+              schema:
+                type: string
+                example: '2025-05-25T06:06:45.954Z'
+              description: End date (ISO string) up to which you want to view the logs.
+            - name: offset
+              in: query
+              required: false
+              schema:
+                type: number
+                example: 50
+              description: Number of items to skip.
+            - name: count
+              in: query
+              required: false
+              schema:
+                type: number
+                example: 10
+              description: The number of items to return.
+            - name: sort
+              in: query
+              required: false
+              schema:
+                type: string
+              description: List of fields to order by, and in which direction.
+
+      # Fix 3: marketplace-apps.yaml declares this operation at /apps/count, unlike every other
+      # operation in the same file, which all use the /api/apps/... prefix. Verified live: the
+      # undecorated path falls through to the SPA's HTML shell (text/html, not JSON), while the
+      # prefixed path returns a real JSON response, no auth token even required to observe the
+      # content-type difference.
+      /api/apps/count:
+        get:
+          summary: Get Apps Count
+          tags:
+            - Manage Apps
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      totalMarketplaceEnabled:
+                        type: integer
+                      totalPrivateEnabled:
+                        type: integer
+                      maxMarketplaceApps:
+                        type: integer
+                      maxPrivateApps:
+                        type: integer
+                      success:
+                        type: boolean
+                  examples:
+                    'Total app count ':
+                      value:
+                        totalMarketplaceEnabled: 8
+                        totalPrivateEnabled: 3
+                        maxMarketplaceApps: -1
+                        maxPrivateApps: -1
+                        success: true
+            '401':
+              description: Unauthorized
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      message:
+                        type: string
+          operationId: get-apps-count
+          description: |-
+            Get a total count of apps in your workspace including private and public apps.
+
+            ### Changelog
+            | Version      | Description |
+            | ---------------- | ------------|
+            |6.0.0     | Added       |
+          parameters:
+            - name: X-Auth-Token
+              in: header
+              description: The `authToken` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: RScctEHSmLGZGywfIhWyRpyofhKOiMoUIpimhvheU3f
+            - name: X-User-Id
+              in: header
+              description: The `userId` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: rbAXPnMktTFbNpwtJ
+
+      # Fix 4: same file, same defect pattern -- declared at /apps/buildExternalAppRequest instead
+      # of /api/apps/buildExternalAppRequest. Verified live the same way as Fix 3. Also carries a
+      # second, independent defect fixed in the same overlay entry: the original declares no query
+      # parameters at all, but the real handler requires `appId` -- calling it without one returns a
+      # real 400 ("Invalid request. Please ensure an appId is attached to the request."), confirmed
+      # live, not a guess.
+      /api/apps/buildExternalAppRequest:
+        get:
+          summary: Generate External App Request Form
+          tags:
+            - Manage Apps
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                      success:
+                        type: boolean
+                  examples:
+                    External URL to request app:
+                      value:
+                        url: 'https://marketplace.rocket.chat/apps/ce0e318b-ffc0-4ce4-832b-f1b464beb22a/requestAccess?workspaceId=64df890111e1f20001d201b4&frameworkVersion=1.59.0'
+                        success: true
+            '401':
+              description: Unauthorized
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      message:
+                        type: string
+          operationId: get-apps-buildExternalAppRequest
+          description: 'Build an external app request form. This endpoint returns a link that workspace users can use to request an app externally without being in Rocket.Chat. '
+          parameters:
+            - name: X-Auth-Token
+              in: header
+              description: The `authToken` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: RScctEHSmLGZGywfIhWyRpyofhKOiMoUIpimhvheU3f
+            - name: X-User-Id
+              in: header
+              description: The `userId` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: rbAXPnMktTFbNpwtJ
+            - name: appId
+              in: query
+              required: true
+              schema:
+                type: string
+                example: ce0e318b-ffc0-4ce4-832b-f1b464beb22a
+              description: The id of the app to build the external request link for.
+            - name: url
+              in: query
+              required: false
+              schema:
+                type: string
+              description: Optional marketplace base URL override.
+
+      # Fix 5: miscellaneous.yaml declares this operation at /licenses.maxActiveUsers, unlike every
+      # other operation in the spec, which all use the /api/v1/... prefix. Verified live: the
+      # undecorated path falls through to the SPA's HTML shell (text/html, not JSON), while
+      # /api/v1/licenses.maxActiveUsers returns a real JSON response (401 with an invalid token,
+      # same as every other authenticated endpoint -- not gated at the routing level).
+      /api/v1/licenses.maxActiveUsers:
+        get:
+          tags:
+            - Licenses
+          summary: Get Maximum Active User
+          description: |-
+            Retrieves a list of the maximum active users.
+
+            ### Changelog
+            | Version      | Description |
+            | ---------------- | ------------|
+            |4.0.0         | Added       |
+          operationId: get-licenses.maxActiveUsers
+          parameters:
+            - name: X-Auth-Token
+              in: header
+              description: The `authToken` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: RScctEHSmLGZGywfIhWyRpyofhKOiMoUIpimhvheU3f
+            - name: X-User-Id
+              in: header
+              description: The `userId` of the authenticated user.
+              required: true
+              schema:
+                type: string
+              example: rbAXPnMktTFbNpwtJ
+          responses:
+            '200':
+              description: OK
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      maxActiveUsers:
+                        type: integer
+                      activeUsers:
+                        type: integer
+                      success:
+                        type: boolean
+                  examples:
+                    Success Example:
+                      value:
+                        maxActiveUsers: 25
+                        activeUsers: 0
+                        success: true
+            '401':
+              description: Unauthorized
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                      message:
+                        type: string
+
+  - target: "$.paths['/media-calls.state']"
+    remove: true
+
+  - target: "$.paths['/app/{id}/logs']"
+    remove: true
+
+  - target: "$.paths['/apps/count']"
+    remove: true
+
+  - target: "$.paths['/apps/buildExternalAppRequest']"
+    remove: true
+
+  - target: "$.paths['/licenses.maxActiveUsers']"
+    remove: true

@@ -1,24 +1,54 @@
 # Resiliency/fuzz config: same specs, same live app, but deliberately
 # mutated/generated inputs (schemaResiliencyTests: all) instead of the
-# contract-correctness question Step 3/4 already answered. Kept as a
-# fully separate run from the contract-test one, same reasoning recorded
-# throughout this project: blending correctness checking with fuzz
-# testing produces an unreadable wall of failures where "the API doesn't
-# match the docs" and "the API didn't reject garbage gracefully" get
-# tangled together.
+# contract-correctness question the contract-test-all run already answers.
+# Kept as a fully separate run/report from that one -- blending "the API
+# doesn't match the docs" failures with "the API didn't reject garbage
+# gracefully" failures produces an unreadable wall of failures, regardless
+# of whether real credentials are involved.
 #
-# No --examples here: --config (required for schemaResiliencyTests, no
-# CLI flag exists for it) and --examples cannot be combined in this
-# pinned image (see README Step 4) -- so this run has no real auth
-# wired, same limitation the old branch's own resiliency run had for
-# 11 of its 12 specs. Resiliency testing's actual value (does malformed
-# input crash the app rather than being rejected cleanly) still applies
-# regardless of auth state, so this is a real, if auth-less, run -- not
-# a no-op.
+# Real examples ARE loaded here (unlike this file's first version), via the
+# v3 rich-form config's components.services.<name>.data.examples.directories
+# key -- NOT the --examples CLI flag, which is mutually exclusive with
+# --config and silently drops external examples if both are passed. This
+# combination (real auth/fixtures + full schema-resiliency fuzzing, in one
+# report) was verified live against all 12 specs: see README "Combining
+# real examples with schemaResiliencyTests: all across all 12 specs".
 #
-# No governance/coverage gate: "coverage" isn't a meaningful pass/fail
-# signal under fuzzing the way it is for the contract run. Report-only.
+# `components:` is a top-level sibling of `specmatic:`, not nested under
+# it -- the nested form errors with "specmatic.components is not a valid
+# property" on this pinned image.
 version: 3
+components:
+  sources:
+    localFilesystemRepo:
+      filesystem:
+        directory: "/usr/src/app"
+
+  services:
+    rocketchatApi:
+      description: "Rocket.Chat REST API, all 12 spec files"
+      definitions:
+        - definition:
+            source:
+              $ref: "#/components/sources/localFilesystemRepo"
+            specs:
+              - "specs/authentication.yaml"
+              - "specs/content-management.yaml"
+              - "specs/integrations.yaml"
+              - "specs/marketplace-apps.yaml"
+              - "specs/messaging.yaml"
+              - "specs/miscellaneous.yaml"
+              - "specs/notifications.yaml"
+              - "specs/omnichannel.yaml"
+              - "specs/rooms.yaml"
+              - "specs/settings.yaml"
+              - "specs/statistics.yaml"
+              - "specs/user-management.yaml"
+      data:
+        examples:
+          - directories:
+              - "/usr/src/app/examples"
+
 specmatic:
   settings:
     test:

@@ -1,17 +1,16 @@
 name: Specmatic Resiliency Test
 
-# Same live RocketChat, same 12 specs as specmatic-contract-test.yml, but
-# with schemaResiliencyTests: all (specmatic/specmatic_resiliency.yaml) --
-# deliberately mutated/fuzzed inputs checking whether RocketChat rejects
-# them gracefully instead of crashing or leaking internal errors. A
-# different question from "does the API match the docs" (that's
-# specmatic-contract-test.yml), so it's entirely report-only: there's no
-# established baseline yet for what a "good" resiliency pass rate looks
-# like. No --examples here (see specmatic_resiliency.yaml for why --config
-# and --examples can't be combined in this pinned image), so this run has
-# no real auth wired -- same limitation the rest of this project already
-# documents, and resiliency testing's value (catching ungraceful failures
-# on malformed input) still holds regardless of auth state.
+# Same live RocketChat, same 12 specs and same real auth/fixture examples as
+# specmatic-contract-test.yml, but with schemaResiliencyTests: all
+# (specmatic/specmatic_resiliency.yaml) -- deliberately mutated/fuzzed
+# inputs checking whether RocketChat rejects them gracefully instead of
+# crashing or leaking internal errors. A different question from "does the
+# API match the docs" (that's specmatic-contract-test.yml), so it's
+# entirely report-only: there's no established baseline yet for what a
+# "good" resiliency pass rate looks like. Real examples are loaded via
+# specmatic_resiliency.yaml's components: config (v3 rich-form,
+# config-based example loading), not the --examples flag -- see that file
+# and README for why, and for the live verification of this combination.
 
 on:
   pull_request:
@@ -51,6 +50,9 @@ jobs:
           echo "RocketChat did not become ready in time" >&2
           exit 1
 
+      - name: Generate live auth/fixture examples
+        run: ./specmatic/scripts/regenerate-auth-examples.sh
+
       - name: Dump RocketChat logs (diagnostics)
         if: failure()
         run: |
@@ -70,7 +72,7 @@ jobs:
             -f rocketchat-docker/compose.yml -f specmatic/compose.test.yml \
             --profile test up specmatic-resiliency-test-all
 
-      - name: Upload JUnit report
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:

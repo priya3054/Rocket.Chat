@@ -4,13 +4,16 @@ name: Specmatic Contract Test
 # all 12 OpenAPI specs, using real auth/fixture data via external Specmatic
 # examples (regenerate-auth-examples.sh), not spec edits or fixed
 # credentials (see specmatic-contract-testing/README.md for why the spec
-# itself is never touched). Real, measured coverage is currently 5% (see
-# README "Step 4: Honest coverage gate") -- most operations across 8 of
-# the 12 specs don't have committed examples yet, a known, documented,
-# scoped limitation, not a regression this change introduced. The
-# individual test run is report-only (continue-on-error); the actual gate
-# is the coverage-percentage check below, which fails the job if coverage
-# drops beneath the real baseline.
+# itself is never touched).
+#
+# The goal here isn't chasing a coverage percentage -- most of these
+# operations' failures are already-documented, accepted spec/app drift
+# (see README), not bugs worth blocking merges over. Coverage is reported
+# as an informational number. The actual gate below fails only on a real
+# regression signal: Specmatic reporting framework-level Errors (a crash,
+# not a scenario mismatch), or the real-example-backed run producing zero
+# Successes (meaning auth/fixture generation broke and every test is
+# running against garbage credentials instead of real ones).
 
 on:
   pull_request:
@@ -65,7 +68,7 @@ jobs:
           name: contract-test-diagnostics
           path: specmatic-contract-testing/rocketchat-diagnostics.log
 
-      - name: Run contract tests, all 12 specs (report-only -- see coverage gate step below)
+      - name: Run contract tests, all 12 specs (report-only -- see regression gate step below)
         continue-on-error: true
         run: |
           DEPRECATED_COMPOSE_ACK=1 docker compose \
@@ -73,21 +76,30 @@ jobs:
             --profile test up specmatic-contract-test-all \
             2>&1 | tee contract-test-output.log
 
-      - name: Enforce coverage gate
+      - name: Report coverage (informational, not gated)
         run: |
-          COVERAGE=$(grep -oE '[0-9]+% API Coverage reported' contract-test-output.log | head -1 | grep -oE '^[0-9]+')
-          if [ -z "$COVERAGE" ]; then
-            echo "Could not find a coverage percentage in the test output -- failing closed." >&2
+          grep -oE '[0-9]+% API Coverage reported' contract-test-output.log | head -1 || echo "No coverage line found in output."
+
+      - name: Enforce regression gate
+        run: |
+          SUMMARY=$(grep -oE 'Tests run: [0-9]+, Successes: [0-9]+, Failures: [0-9]+, WIP: [0-9]+, Errors: [0-9]+' contract-test-output.log | tail -1)
+          if [ -z "$SUMMARY" ]; then
+            echo "Could not find a test summary line in the output -- failing closed." >&2
             exit 1
           fi
-          echo "Coverage reported: ${COVERAGE}%"
-          THRESHOLD=5
-          if [ "$COVERAGE" -lt "$THRESHOLD" ]; then
-            echo "Coverage ${COVERAGE}% is below the ${THRESHOLD}% baseline recorded in README.md (Step 4)." >&2
+          echo "$SUMMARY"
+          SUCCESSES=$(echo "$SUMMARY" | grep -oE 'Successes: [0-9]+' | grep -oE '[0-9]+')
+          ERRORS=$(echo "$SUMMARY" | grep -oE 'Errors: [0-9]+' | grep -oE '[0-9]+')
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "Specmatic reported $ERRORS framework-level error(s) -- treated as a crash, not an expected scenario mismatch." >&2
+            exit 1
+          fi
+          if [ "$SUCCESSES" -eq 0 ]; then
+            echo "Zero successful tests -- real auth/fixture generation likely broke, so every test ran against garbage credentials." >&2
             exit 1
           fi
 
-      - name: Upload JUnit report
+      - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:

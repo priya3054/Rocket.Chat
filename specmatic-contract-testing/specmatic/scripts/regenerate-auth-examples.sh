@@ -1236,21 +1236,25 @@ EOF
 
 echo "Wrote integrations.remove/oauth-apps.delete examples using dedicated, separate fixtures (integrationId: ${INTEGRATION_TO_REMOVE_ID}, oauthAppId: ${OAUTH_APP_TO_DELETE_ID})."
 
-# marketplace-apps.yaml -- 5 of 13 operations are real, tractable without
+# marketplace-apps.yaml -- 7 of 13 operations are real, tractable without
 # external app packages/WhatsApp/video-conference setup. Deferred (not
 # fabricated): POST /api/apps (install, needs a real app package),
 # public/{app-id}/incoming and public/{appId}/templateMessage (webhook/
 # WhatsApp-template endpoints needing external integration config),
 # api/apps/{appId} GET/DELETE (real 404 for a nonexistent app is not a
 # declared status code for either operation -- an undocumented-status-
-# code gap, not something an example can paper over), apps/count and
-# apps/buildExternalAppRequest (already-documented missing /api prefix,
-# same spec-blocker category as media-calls.state but not overlaid here
-# to keep scope tight), apps/marketplace (needs real outbound internet to
-# Rocket.Chat's cloud marketplace -- hung/timed out in this environment,
-# confirmed not a real app bug), jitsi.update-timeout (confirmed dead --
-# no matching route anywhere in apps/meteor/server, tried both
-# slash and dot path-segment conventions).
+# code gap, not something an example can paper over), apps/marketplace
+# (needs real outbound internet to Rocket.Chat's cloud marketplace --
+# hung/timed out in this environment, confirmed not a real app bug),
+# jitsi.update-timeout (confirmed dead -- no matching route anywhere in
+# apps/meteor/server, tried both slash and dot path-segment conventions).
+# apps/count and apps/buildExternalAppRequest were previously in this
+# deferred list (missing /api prefix, same category as media-calls.state)
+# but are now fixed via path-prefix-fixes.overlay.yaml -- see the two
+# examples below targeting the corrected paths. buildExternalAppRequest
+# also needed a second fix in the same overlay entry: the spec declares
+# no query parameters at all, but the real handler 400s without a real
+# `appId` (confirmed live) -- the overlay now declares it required.
 cat > "${EXAMPLES_DIR}/marketplace-apps/apps-installed.json" <<EOF
 {
   "http-request": {
@@ -1277,48 +1281,99 @@ cat > "${EXAMPLES_DIR}/marketplace-apps/apps-categories.json" <<EOF
 }
 EOF
 
+# /app/{id}/logs is a media-calls.state-style missing-prefix defect -- the spec
+# declares this path without /api/apps; the real route (apps/meteor/ee/server/apps/
+# communication/rest.ts: APIClass<'/apps'>, version: 'apps', route ':id/logs') is
+# /api/apps/{id}/logs (verified live: the bare declared path falls through to the
+# SPA's HTML shell, not real JSON -- same signature as media-calls.state). Now fixed
+# via the same path-prefix-fixes.overlay.yaml overlay used for media-calls.state, so
+# both example files below target the corrected, real /api/apps/{id}/logs path. No
+# app is installed in this environment (apps: [] -- confirmed live via
+# GET /api/apps/installed), so both examples exercise the real "app not found" 404,
+# not a populated logs list; the second file additionally exercises the declared
+# count/offset/sort query params. logLevel is deliberately NOT exercised here: the
+# spec declares it as a bare `string` with no enum, but the real app
+# (packages/rest-typings/src/apps/appLogsProps.ts) enforces `enum: ['0','1','2']`
+# via ajv and 400s on anything else (confirmed live with logLevel=debug) -- a real,
+# undocumented-but-in-the-opposite-direction accepted-drift finding (the spec is
+# looser than the real validation, not stricter).
 cat > "${EXAMPLES_DIR}/marketplace-apps/apps-logs.json" <<EOF
 {
   "http-request": {
-    "path": "/api/apps/logs",
+    "path": "/api/apps/nonexistent-app-id/logs",
     "method": "GET",
+    "query": { "count": "10", "offset": "0", "sort": "{\"_updatedAt\":-1}" },
     "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
   },
-  "http-response": { "status": 200, "body": { "offset": 0, "logs": [], "count": 0, "total": 0, "success": true } }
+  "http-response": {
+    "status": 404,
+    "body": { "success": false, "error": "No App found by the id of: nonexistent-app-id" }
+  }
 }
 EOF
 
-# /app/{id}/logs is a media-calls.state-style missing-prefix defect --
-# the spec declares this path without /api/apps; the real route is
-# /api/apps/{id}/logs (verified live: the bare declared path 200s with
-# the SPA HTML fallback, not real JSON -- same signature already
-# documented for media-calls.state). Not fixed via a dedicated overlay
-# here to keep scope tight (logged as a second candidate for that same
-# upstream issue); this example targets the spec's own declared (broken)
-# path, so it will show the same R1001/R1002 wrong-content-type findings
-# as media-calls.state did before its overlay -- a real, honest
-# reflection of the spec-blocker, not something papered over.
 cat > "${EXAMPLES_DIR}/marketplace-apps/app-id-logs.json" <<EOF
 {
   "http-request": {
-    "path": "/app/nonexistent-app-id/logs",
+    "path": "/api/apps/nonexistent-app-id/logs",
     "method": "GET",
     "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
   },
-  "http-response": { "status": 200, "body": { "offset": 0, "logs": [], "count": 0, "total": 0, "success": true } }
+  "http-response": {
+    "status": 404,
+    "body": { "success": false, "error": "No App found by the id of: nonexistent-app-id" }
+  }
 }
 EOF
 
-echo "Wrote marketplace-apps.yaml examples (5 real, 8 deferred/spec-blocked -- see comment above)."
+cat > "${EXAMPLES_DIR}/marketplace-apps/apps-count.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/apps/count",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": {
+    "status": 200,
+    "body": { "totalMarketplaceEnabled": 0, "totalPrivateEnabled": 0, "maxMarketplaceApps": 5, "maxPrivateApps": 0, "success": true }
+  }
+}
+EOF
 
-# miscellaneous.yaml -- 22 of 30 operations are real and tractable.
+# appId is real-but-arbitrary -- the endpoint builds a request-access URL from it
+# without validating the app actually exists (confirmed live), so any well-formed
+# id exercises the real 200 path.
+cat > "${EXAMPLES_DIR}/marketplace-apps/apps-buildExternalAppRequest.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/apps/buildExternalAppRequest",
+    "method": "GET",
+    "query": { "appId": "ce0e318b-ffc0-4ce4-832b-f1b464beb22a" },
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": {
+    "status": 200,
+    "body": { "url": "https://marketplace.rocket.chat/apps/ce0e318b-ffc0-4ce4-832b-f1b464beb22a/requestAccess", "success": true }
+  }
+}
+EOF
+
+echo "Wrote marketplace-apps.yaml examples (7 real, 6 deferred/spec-blocked -- see comment above)."
+
+# miscellaneous.yaml -- 23 of 30 operations are real and tractable.
 # Deferred (not fabricated): shield.svg (text/plain SVG body, spot-
 # checked live -- 200 with real channel/name params -- not committed as
-# a JSON external example), licenses.maxActiveUsers (already-documented
-# missing /api/v1 prefix, third instance of that spec-blocker category),
-# licenses.add (needs a real license key, out of scope), jitsi.update-
-# timeout (confirmed dead, same finding as marketplace-apps.yaml),
-# incoming-webhook/templateMessage (need external integration config).
+# a JSON external example), licenses.add (needs a real license key, out
+# of scope), jitsi.update-timeout (confirmed dead, same finding as
+# marketplace-apps.yaml), incoming-webhook/templateMessage (need external
+# integration config). licenses.maxActiveUsers was previously in this
+# deferred list (missing /api/v1 prefix, same category as media-calls.
+# state) but is now fixed via path-prefix-fixes.overlay.yaml -- see the
+# example below. That fix surfaces a second, distinct, non-fixable
+# finding, though: on this unlicensed instance the real response is
+# `maxActiveUsers: null`, not the `integer` the spec declares -- real,
+# EE-license-gated behavior (no license means no numeric ceiling to
+# report), logged as accepted drift, not fabricated as a fake integer.
 #
 # Real, new findings from this pass: (1) commands.run's "archive" was
 # tried first and genuinely archived #general -- caught and undone via
@@ -1518,7 +1573,21 @@ cat > "${EXAMPLES_DIR}/miscellaneous/calendar-events-import.json" <<EOF
 }
 EOF
 
-echo "Wrote miscellaneous.yaml examples (22 real, event: ${EVENT_ID}, inbox: ${INBOX_ID})."
+cat > "${EXAMPLES_DIR}/miscellaneous/licenses-maxActiveUsers.json" <<EOF
+{
+  "http-request": {
+    "path": "/api/v1/licenses.maxActiveUsers",
+    "method": "GET",
+    "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" }
+  },
+  "http-response": {
+    "status": 200,
+    "body": { "maxActiveUsers": null, "activeUsers": 6, "success": true }
+  }
+}
+EOF
+
+echo "Wrote miscellaneous.yaml examples (23 real, event: ${EVENT_ID}, inbox: ${INBOX_ID})."
 
 # calendar-events.delete / email-inbox delete need their own, dedicated
 # fixtures -- same reasoning as integrations.remove/oauth-apps.delete
@@ -2086,8 +2155,19 @@ cat > "${EXAMPLES_DIR}/rooms/channels-getAllUserMentionsByChannel.json" <<EOF
 { "http-request": { "path": "/api/v1/channels.getAllUserMentionsByChannel", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 200, "body": { "mentions": [], "count": 0, "offset": 0, "total": 0, "success": true } } }
 EOF
 
+# Sending zero headers here does NOT reach the "Accounts_AllowAnonymousRead"
+# check this operation is meant to exercise -- the route is registered with
+# `authOrAnonRequired: true` (apps/meteor/server/api/v1/channels.ts:1462-1464),
+# which requires either real auth or a genuine RocketChat anonymous-session
+# cookie; a plain headerless request satisfies neither and 401s before the
+# handler's own setting check ever runs (confirmed live: was previously
+# committed with empty headers expecting `{"error": "This feature is
+# disabled"}`, a fabricated message that was never real -- the actual 401
+# response is `{"error": "You must be logged in to do this."}`). Using real
+# auth headers instead correctly reaches the handler and its real error
+# response.
 cat > "${EXAMPLES_DIR}/rooms/channels-anonymousread.json" <<EOF
-{ "http-request": { "path": "/api/v1/channels.anonymousread", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": {} }, "http-response": { "status": 400, "body": { "success": false, "error": "This feature is disabled" } } }
+{ "http-request": { "path": "/api/v1/channels.anonymousread", "method": "GET", "query": { "roomId": "${CHANNEL_ID}" }, "headers": { "X-Auth-Token": "${auth_token}", "X-User-Id": "${user_id}" } }, "http-response": { "status": 400, "body": { "success": false, "error": "Enable \"Allow Anonymous Read\" [error-not-allowed]", "errorType": "error-not-allowed" } } }
 EOF
 
 for op in "addAll:{\"roomId\":\"${CHANNEL_ID}\"}" "addLeader:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "addModerator:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "removeLeader:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "removeModerator:{\"roomId\":\"${CHANNEL_ID}\",\"userId\":\"${user_id}\"}" "setAnnouncement:{\"roomId\":\"${CHANNEL_ID}\",\"announcement\":\"specmatic test announcement\"}" "setDescription:{\"roomId\":\"${CHANNEL_ID}\",\"description\":\"specmatic test description\"}" "setPurpose:{\"roomId\":\"${CHANNEL_ID}\",\"purpose\":\"specmatic test purpose\"}" "setTopic:{\"roomId\":\"${CHANNEL_ID}\",\"topic\":\"specmatic test topic\"}" "setCustomFields:{\"roomId\":\"${CHANNEL_ID}\",\"customFields\":{}}" "setJoinCode:{\"roomId\":\"${CHANNEL_ID}\",\"joinCode\":\"1234\"}"; do

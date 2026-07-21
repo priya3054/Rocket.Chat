@@ -94,7 +94,7 @@ services:
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
-      - ../specmatic/reports/contract:/usr/src/app/reports
+      - ../specmatic/reports/contract:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -103,7 +103,6 @@ services:
       - --examples
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
       # Exclusions, each a documented spec-blocker/test-isolation case, not
       # a spec edit -- see README "Issues found and fixed" for the evidence
       # behind each one:
@@ -129,7 +128,7 @@ services:
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
-      - ../specmatic/reports/content-management:/usr/src/app/reports
+      - ../specmatic/reports/content-management:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -138,7 +137,6 @@ services:
       - --examples
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
 
   # notifications.yaml: 6 of 8 operations verified with real requests (5
   # clean, 1 genuine drift -- push.token's real response field is
@@ -150,7 +148,7 @@ services:
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
-      - ../specmatic/reports/notifications:/usr/src/app/reports
+      - ../specmatic/reports/notifications:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -159,7 +157,6 @@ services:
       - --examples
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
 
   # messaging.yaml: 44 operations, real fixtures seeded (message, threaded
   # reply, DM room) by regenerate-auth-examples.sh. --lenient is required
@@ -180,7 +177,7 @@ services:
     volumes:
       - ../contracts:/usr/src/app/specs:ro
       - ../specmatic/examples:/usr/src/app/examples:ro
-      - ../specmatic/reports/messaging:/usr/src/app/reports
+      - ../specmatic/reports/messaging:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -189,7 +186,6 @@ services:
       - --examples
       - /usr/src/app/examples
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
       - --lenient
 
   # All 12 specs together, real examples -- this is what Step 4's honest
@@ -223,7 +219,7 @@ services:
       - ../specmatic/examples:/usr/src/app/examples:ro
       - ../specmatic/overlays:/usr/src/app/overlays:ro
       - ../specmatic/dictionaries/rooms_dictionary.yaml:/usr/src/app/specs/rooms_dictionary.yaml:ro
-      - ../specmatic/reports/all:/usr/src/app/reports
+      - ../specmatic/reports/all:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -242,22 +238,22 @@ services:
       - /usr/src/app/specs/user-management.yaml
       - --examples
       - /usr/src/app/examples
-      - --overlay-file=/usr/src/app/overlays/media-calls-path.overlay.yaml
+      - --overlay-file=/usr/src/app/overlays/path-prefix-fixes.overlay.yaml
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
       - --lenient
       - --timeout-in-ms=15000
       - --filter=!(PATH='/api/v1/login - with Facebook') && !(PATH='/api/v1/login - with Twitter') && !(PATH='/api/v1/login - with Google') && !(PATH='/api/v1/logout') && !(PATH='/api/v1/twoFactorChallenges.sendEmailCode') && !(PATH='/api/v1/twoFactorChallenges.verifyChallenge')
 
-  # Resiliency/fuzz run, all 12 specs, informational only -- see
-  # specmatic_resiliency.yaml for why there's no --examples here
-  # (mutually exclusive with --config in this pinned image, and
-  # schemaResiliencyTests has no CLI flag).
-  # --overlay-file: scoped, single-purpose correction -- settings.yaml
-  # declares /media-calls.state (missing /api/v1) while the real endpoint
-  # lives at /api/v1/media-calls.state (verified live, see README). Applied
-  # in-memory by Specmatic at test time only; the contracts submodule is
-  # never touched. This is deliberately NOT used to paper over the other,
+  # Resiliency/fuzz run, all 12 specs, informational only. Real examples are
+  # loaded here too, via specmatic_resiliency.yaml's components: config (see
+  # that file and README) -- not the --examples flag, which this run can't
+  # use alongside --config on this pinned image.
+  # --overlay-file: two scoped, mechanical path-prefix corrections -- settings.yaml
+  # declares /media-calls.state (missing /api/v1) and marketplace-apps.yaml declares
+  # /app/{id}/logs (missing /api/apps) while the real endpoints live at
+  # /api/v1/media-calls.state and /api/apps/{id}/logs respectively (verified live, see
+  # README). Applied in-memory by Specmatic at test time only; the contracts submodule
+  # is never touched. This is deliberately NOT used to paper over the other,
   # already-triaged accepted-drift findings (undocumented success/error/
   # enterprise fields, the settings.public value oneOf gap) -- those stay
   # as documented drift, not silenced via overlay.
@@ -292,9 +288,10 @@ services:
       - ../contracts/statistics.yaml:/usr/src/app/specs/statistics.yaml:ro
       - ../contracts/user-management.yaml:/usr/src/app/specs/user-management.yaml:ro
       - ../specmatic/specmatic_resiliency.yaml:/usr/src/app/specmatic.yaml:ro
+      - ../specmatic/examples:/usr/src/app/examples:ro
       - ../specmatic/overlays:/usr/src/app/overlays:ro
       - ../specmatic/dictionaries/rooms_dictionary.yaml:/usr/src/app/specs/rooms_dictionary.yaml:ro
-      - ../specmatic/reports/resiliency:/usr/src/app/reports
+      - ../specmatic/reports/resiliency:/usr/src/app/build/reports/specmatic
     depends_on:
       - rocketchat
     command:
@@ -312,9 +309,8 @@ services:
       - /usr/src/app/specs/statistics.yaml
       - /usr/src/app/specs/user-management.yaml
       - --config=/usr/src/app/specmatic.yaml
-      - --overlay-file=/usr/src/app/overlays/media-calls-path.overlay.yaml
+      - --overlay-file=/usr/src/app/overlays/path-prefix-fixes.overlay.yaml
       - --testBaseURL=http://rocketchat:${PORT:-3000}
-      - --junitReportDir=/usr/src/app/reports
       - --lenient
       - --timeout-in-ms=15000
       - --filter=!(PATH='/api/v1/livechat/rooms')
